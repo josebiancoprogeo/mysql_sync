@@ -1,0 +1,40 @@
+﻿<Window x:Class="mysql_sync.Forms.FormCompareResult"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Resultado da Comparação" Height="600" Width="1000">
+    <Grid Margin="10">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="2*"/>
+            <!-- master e slave lado a lado -->
+            <ColumnDefinition Width="3*"/>
+            <!-- resultados -->
+        </Grid.ColumnDefinitions>
+
+        <!-- painel com dois DataGrids empilhados -->
+        <Grid Grid.Column="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <GroupBox Header="Master" Grid.Row="0" Margin="0,0,0,5">
+                <DataGrid x:Name="dgMaster" AutoGenerateColumns="True" IsReadOnly="True"/>
+            </GroupBox>
+            <GroupBox Header="Slave"  Grid.Row="1">
+                <DataGrid x:Name="dgSlave"  AutoGenerateColumns="True" IsReadOnly="True"/>
+            </GroupBox>
+        </Grid>
+
+        <!-- resultados de merge -->
+        <GroupBox Header="Comparação" Grid.Column="1" Margin="10,0,0,0">
+            <DataGrid x:Name="dgCompare"
+                AutoGenerateColumns="False"
+                IsReadOnly="True">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="PK" Binding="{Binding Key}"/>
+                    <DataGridTextColumn Header="Status" Binding="{Binding Status}"/>
+                    <!-- opcionalmente mais colunas com valores comparados -->
+                </DataGrid.Columns>
+            </DataGrid>
+        </GroupBox>
+    </Grid>
+</Window>

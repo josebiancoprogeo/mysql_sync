@@ -1,0 +1,117 @@
+﻿<Window x:Class="mysql_sync.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:mysql_sync.Forms"
+        xmlns:class="clr-namespace:mysql_sync.Class"
+        mc:Ignorable="d"
+        Title="MySQL Sync" Height="450" Width="888">
+
+    <Window.Resources>
+        <!-- registra o conversor embutido BooleanToVisibilityConverter -->
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+    </Window.Resources>    
+    
+    <Grid Margin="10">
+        <!-- Define duas colunas: 25% e 75% -->
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="1*" />
+            <ColumnDefinition Width="3*" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TreeView x:Name="tvConnections"
+          ItemsSource="{Binding Connections}"
+                            SelectedItemChanged="tvConnections_SelectedItemChanged"
+          Grid.Row="0" Grid.Column="0"
+          Margin="0,0,10,0">
+            <TreeView.Resources>
+
+                <!-- 1) ContextMenu em DatabaseConnection para “Marcar como Master” -->
+                <HierarchicalDataTemplate
+        DataType="{x:Type class:DatabaseConnection}"
+        ItemsSource="{Binding Databases}">
+                    <StackPanel Orientation="Horizontal">
+                        <!-- ContextMenu aqui -->
+                        <StackPanel.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Marcar como Master"
+                      Click="MarkAsMaster_Click"/>
+                            </ContextMenu>
+                        </StackPanel.ContextMenu>
+
+                        <TextBlock Text="{Binding Name}"/>
+                        <TextBlock Text=" (M)"
+                   Foreground="DarkGreen"
+                   Visibility="{Binding Master,
+                     Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                    </StackPanel>
+                </HierarchicalDataTemplate>
+
+                <!-- 2) Database → Tables -->
+                <HierarchicalDataTemplate
+        DataType="{x:Type class:Database}"
+        ItemsSource="{Binding Objects}">
+                    <TextBlock Text="{Binding Name}"/>
+                </HierarchicalDataTemplate>
+
+                <!-- 3) Table com CheckBox e ContextMenu de comparar -->
+                <DataTemplate DataType="{x:Type class:Table}">
+                    <StackPanel Orientation="Horizontal">
+                        <CheckBox IsChecked="{Binding IsSelected,Mode=TwoWay}"
+                  VerticalAlignment="Center"
+                  Margin="0,0,5,0"/>
+                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
+
+                        <!-- ContextMenu para CompararTabela -->
+                        <StackPanel.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="CompararTabela"
+                      Click="CompareTables_Click"/>
+                            </ContextMenu>
+                        </StackPanel.ContextMenu>
+                    </StackPanel>
+                </DataTemplate>
+
+            </TreeView.Resources>
+        </TreeView>
+
+
+        <!-- Área principal: canais do connection selecionado -->
+        <Border Grid.Row="0" Grid.Column="1" Background="#FFF" BorderBrush="#DDD" BorderThickness="1">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <ItemsControl ItemsSource="{Binding SelectedConnection.Channels}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <local:UCReplicationChannel
+                                Channel="{Binding}"
+                                Connection="{Binding DataContext.SelectedConnection, RelativeSource={RelativeSource AncestorType=Window}}"
+                                Margin="5"/>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Botões de adicionar e remover -->
+        <StackPanel Orientation="Horizontal"
+                    HorizontalAlignment="Left"
+                    Grid.Row="1"
+                    Grid.Column="0"
+                    Margin="0,5,0,0">
+            <Button x:Name="btnAdd"
+                    Content="Adicionar"
+                    Width="100"
+                    Margin="0,0,5,0"
+                    Click="btnAdd_Click" />
+            <Button x:Name="btnRemove"
+                    Content="Remover"
+                    Width="100"
+                    Click="btnRemove_Click" />
+        </StackPanel>
+    </Grid>
+</Window>
