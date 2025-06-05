@@ -1,5 +1,7 @@
 ﻿using MySql.Data.MySqlClient;
 using Mysqlx.Crud;
+using MySqlX.XDevAPI.Common;
+using MySqlX.XDevAPI.Relational;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -436,10 +438,146 @@ namespace mysql_sync.Class
                 SynchronizeChannels();
             }
         }
+
+        /**
+         * <summary>
+         * Insere uma linha em <tableName> usando somente as colunas listadas em selectedColumns,
+         * pegando valores do DataRow rowData.  
+         * “geometry” no Column.DataType é tratado via GeomFromWKB.
+         * Internamente abre/fecha conexão para cada insert (para respeitar paralelismo).
+         * </summary>
+         */
+        public void InsertRow(Table tab, DataRow rowData)
+        {
+            if (tab.Columns == null || tab.Columns.Count == 0)
+                throw new ArgumentException("Não há colunas selecionadas para inserção.");
+
+            // Monta lista de nomes de colunas e valores
+            var columnNames = new List<string>();
+            var valueLiterals = new List<string>();
+
+            foreach (var col in tab.Columns)
+            {
+                string colName = col.Name;
+                columnNames.Add($"`{colName}`");
+
+                var dataTypeLower = col.DataType.ToLowerInvariant();
+                var rawValue = rowData[colName];
+
+                // Se for NULL no DataRow:
+                if (rawValue == DBNull.Value)
+                {
+                    valueLiterals.Add("NULL");
+                    continue;
+                }
+
+                // 1) Coluna geometry (por exemplo: "point", "linestring", "polygon", etc)
+                if (dataTypeLower.Contains("geometry")
+                    || dataTypeLower.Contains("point")
+                    || dataTypeLower.Contains("linestring")
+                    || dataTypeLower.Contains("polygon"))
+                {
+                    // Trata apenas arrays de bytes (WKB)
+                    if (rawValue is byte[] arr)
+                    {
+                        // Se tem pelo menos 5 bytes, supomos que os primeiros 4 são SRID
+                        byte[] wkbPure;
+                        if (arr.Length > 4)
+                        {
+                            wkbPure = new byte[arr.Length - 4];
+                            Array.Copy(arr, 4, wkbPure, 0, wkbPure.Length);
+                        }
+                        else
+                        {
+                            // WKB inválido ou sem conteúdo; insere NULL
+                            valueLiterals.Add("NULL");
+                            continue;
+                        }
+
+                        // Converte para hex (ex: "0x010203...")
+                        string hex = BitConverter.ToString(wkbPure).Replace("-", "");
+                        // Usa GeomFromWKB(hex, SRID) — aqui usamos SRID fixo 4326; ajuste se necessário
+                        valueLiterals.Add($"St_SwapXY(ST_GeomFromWKB(0x{hex}, 4326))");
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException(
+                            $"Para coluna '{colName}' (geometry), esperava byte[]. Tipo recebido: {rawValue.GetType().Name}"
+                        );
+                    }
+                }
+                // 2) Coluna textual (string, datetime, etc)
+                else if (rawValue is string s)
+                {
+                    // Escapa aspas simples seguindo regra SQL
+                    string escaped = s.Replace("'", "''");
+                    valueLiterals.Add($"'{escaped}'");
+                }
+                // 3) DataTime
+                else if (rawValue is DateTime dt)
+                {
+                    string fmt = dt.ToString("yyyy-MM-dd HH:mm:ss");
+                    valueLiterals.Add($"'{fmt}'");
+                }
+                // 4) Numérico (int, long, decimal, double, etc)
+                else if (rawValue is IFormattable num)
+                {
+                    // Directamente a ToString usando InvariantCulture
+                    valueLiterals.Add(num.ToString(null, System.Globalization.CultureInfo.InvariantCulture));
+                }
+                // 5) Booleano
+                else if (rawValue is bool b)
+                {
+                    valueLiterals.Add(b ? "1" : "0");
+                }
+                // 6) Qualquer outro tipo convertido para string e entre aspas
+                else
+                {
+                    string rawEscaped = rawValue.ToString().Replace("'", "''");
+                    valueLiterals.Add($"'{rawEscaped}'");
+                }
+            }
+
+            // Constroi a cláusula INSERT
+            string columnsJoined = string.Join(", ", columnNames);
+            string valuesJoined = string.Join(", ", valueLiterals);
+            string sql = $"INSERT INTO `{tab.Name}` ({columnsJoined}) VALUES ({valuesJoined});";
+
+            // Executa em uma nova conexão (sem envolvimento de replicação)
+            StopRefresh = true;
+            try
+            {
+                ExecuteNonQuery("SET sql_log_bin = OFF;");
+                ExecuteNonQuery(sql);
+                //ExecuteNonQuery("SET sql_log_bin = ON;");
+            }
+            catch (Exception ex)
+            {
+
+                Console.WriteLine($"[InsertRow] Erro ao inserir em {tab.Name}: {ex.Message}\nSQL: {sql}");
+            }
+            finally
+            {
+                ExecuteNonQuery("SET sql_log_bin = ON;");
+                StopRefresh = false;
+                SynchronizeChannels();
+            }
+        }
+
+        internal async Task<DataRow> SelectRowByIDAsync(Table tab, string key)
+        {
+            // 1) monta SELECT dinamicamente
+            var pkCol = tab.Columns.First(c => c.IsPrimaryKey).Name;
+            var otherCols = tab.Columns.Where(c => !c.IsPrimaryKey).Select(c => $"`{c.Name}`");
+            var selectCols = $"`{pkCol}`"
+                           + (otherCols.Any() ? ", " + string.Join(", ", otherCols) : "");
+
+            var sql = $"SELECT {selectCols} FROM `{tab.Parent.Name}`.`{tab.Name}` WHERE `{pkCol}` = '{key}' limit 1";
+
+            // recupera os DataTables
+            DataTable respDt = await ExecuteQueryAsync(sql);
+
+            return (respDt.Rows.Count > 0) ? respDt.Rows[0] : null;
+        }
     }
-
-
-
-
-    // Classes de modelo SlaveStatus, ApplierStatus e ReplicationChannel mantêm-se inalteradas
 }

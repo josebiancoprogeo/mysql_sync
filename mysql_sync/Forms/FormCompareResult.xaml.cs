@@ -127,6 +127,7 @@ namespace mysql_sync.Forms
             if (tab != null) {
                 tab.deleteSlave(r.Key.ToString());
                 Console.WriteLine(tab.ToString());
+                RemoveRowFromGrid(r);
             }
         }
         private void DeleteFromMaster(ComparisonResult r)
@@ -136,15 +137,38 @@ namespace mysql_sync.Forms
             {
                 tab.deleteMaster(r.Key.ToString());
                 Console.WriteLine(tab.ToString());
+                RemoveRowFromGrid(r);
             }
         }
 
-        // Stubs de ação
-        private void InsertInSlave(ComparisonResult r) { /* implementar */ }
+        // Por exemplo, em FormCompareResult.xaml.cs:
+        private void InsertInMaster(ComparisonResult r)
+        {
+            // pega o TableResult atual
+            var item = (TableListItem)lvTables.SelectedItem;
+            var tblResult = item.TableResult;
+            tblResult.InsertMaster(r);
+            RemoveRowFromGrid(r);
+        }
 
-        private void InsertInMaster(ComparisonResult r) { /* implementar */ }
+        private void InsertInSlave(ComparisonResult r)
+        {
+            var item = (TableListItem)lvTables.SelectedItem;
+            var tblResult = item.TableResult;
+            tblResult.InsertSlave(r);
+            RemoveRowFromGrid(r);
+        }
 
         private void UpdateSlaveFromMaster(ComparisonResult r) { /* implementar */ }
         private void UpdateMasterFromSlave(ComparisonResult r) { /* implementar */ }
+
+        // Remove a linha da grid e atualiza visualmente
+        private void RemoveRowFromGrid(ComparisonResult r)
+        {
+            var selected = (TableListItem)lvTables.SelectedItem;
+            selected.TableResult.Rows.Remove(r);
+            // Atualiza colunas e itens
+            lvTables_SelectionChanged(lvTables, null);
+        }
     }
 }
