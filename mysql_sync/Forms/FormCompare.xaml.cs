@@ -10,54 +10,34 @@ namespace mysql_sync.Forms
     public partial class FormCompare : Window
     {
         private readonly ObservableCollection<Table> _tables;
-        private readonly ObservableCollection<ColumnSelection> _columnSelections
-            = new ObservableCollection<ColumnSelection>();
+
 
         public Table SelectedTable => (Table)lvTables.SelectedItem;
-        public IEnumerable<ColumnSelection> SelectedColumns => _columnSelections;
+
 
         // MUDAR AQUI: adicionamos o parâmetro databaseName
         public FormCompare(string databaseName, List<Table> tables)
         {
             InitializeComponent();
 
-            // opcional: mostrar no título
             Title = $"Comparar Tabelas — Database: {databaseName}";
 
             _tables = new ObservableCollection<Table>(tables);
             lvTables.ItemsSource = _tables;
 
-            lvColumns.ItemsSource = _columnSelections;
         }
 
         private void lvTables_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            _columnSelections.Clear();
-
             if (lvTables.SelectedItem is Table tbl)
             {
-                // para cada coluna da tabela, cria um ColumnSelection
-                foreach (var col in tbl.Columns)
-                {
-                    _columnSelections.Add(new ColumnSelection(
-                        col.Name,
-                        col.IsPrimaryKey,   // marca PK
-                        col.IsPrimaryKey    // PK sempre selecionada
-                    ));
-                }
+                // ALTERAÇÃO AQUI: bind direto às Column.IsSelected de cada Column
+                lvColumns.ItemsSource = tbl.Columns;
             }
         }
 
         private void btnCompare_Click(object sender, RoutedEventArgs e)
         {
-            // garante que haja uma tabela selecionada
-            if (lvTables.SelectedItem == null)
-            {
-                MessageBox.Show("Selecione uma tabela para comparar.", "Aviso",
-                                MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
             // retorna DialogResult=true para disparar a comparação
             DialogResult = true;
         }

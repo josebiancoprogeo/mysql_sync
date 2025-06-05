@@ -123,7 +123,7 @@ namespace mysql_sync
                 {
                     Connections.Add(newConn);
                     SaveConnections();
-                    newConn.Connect();
+                    newConn.StartRefreshCycle();
                 }
                 else
                 {
@@ -235,7 +235,7 @@ namespace mysql_sync
             e.Handled = true;
         }
 
-        private void CompareTables_Click(object sender, RoutedEventArgs e)
+        private async void CompareTables_Click(object sender, RoutedEventArgs e)
         {
             // 1) coleta todas as tabelas marcadas em qualquer conexão
             var marked = Connections
@@ -305,19 +305,18 @@ namespace mysql_sync
 
             // 6) Ao fechar com OK, pega a tabela e colunas selecionadas no próprio form
             //    (FormCompare deve expor estas duas propriedades)
-            var tableToCompare = form.SelectedTable;          // instância de Table
-            var columnSelections = form.SelectedColumns        // IEnumerable<ColumnSelection>
-                                           .Where(c => c.IsSelected)
-                                           .ToList();
+            //var tableToCompare = form.SelectedTable;          // instância de Table
+            //var selectedColumns = form.SelectedColumns.Select(c => c.Name).ToList();
 
             // 7) Dispara o compare
-            var comparer = new DataCompare(
-                masterConn: master,
-                slaveConn: slave,
-                table: tableToCompare,
-                columns: columnSelections);
+            var comparer = new MultiTableComparer(
+                master: master,
+                slave: slave,           // sua instância de slave
+                tables: masterTables    // lista de Table vindas do Master
 
-            comparer.Execute();
+            );
+
+            await comparer.Execute();
 
             // 8) Mostra o resultado
             var resultForm = new FormCompareResult(comparer) { Owner = this };

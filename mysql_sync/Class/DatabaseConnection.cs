@@ -1,9 +1,11 @@
 ﻿using MySql.Data.MySqlClient;
+using Mysqlx.Crud;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Data;
 using System.Linq;
+using System.Threading.Channels;
 using static System.Runtime.InteropServices.JavaScript.JSType;
 using static System.Runtime.InteropServices.Marshalling.IIUnknownCacheStrategy;
 using Timer = System.Timers.Timer;
@@ -12,7 +14,7 @@ namespace mysql_sync.Class
 {
     /// <summary>
     /// Representa a configuração e monitoramento automático da conexão MySQL,
-    /// incluindo atualização periódica de status de replicação.
+    /// agora abrindo e fechando a cada operação para suportar paralelismo sem conflitos.
     /// </summary>
     public class DatabaseConnection : IDisposable
     {
@@ -25,12 +27,10 @@ namespace mysql_sync.Class
         /// <summary>String de conexão MySQL.</summary>
         public string ConnectionString { get; set; }
 
-        // Conexão única, mantida aberta
-        private MySqlConnection _conn;
+        /// <summary>Flag para pausar as atualizações periódicas.</summary>
+        public bool StopRefresh { get; set; }
 
         public void Refresh() => SynchronizeChannels();
-
-        public bool StopRefresh { get; set; }
 
         /// <summary>Lista observável de canais de replicação.</summary>
         public ObservableCollection<ReplicationChannel> Channels { get; } = new ObservableCollection<ReplicationChannel>();
@@ -38,39 +38,45 @@ namespace mysql_sync.Class
         /// <summary>Lista observável de canais de replicação.</summary>
         public ObservableCollection<Database> Databases { get; } = new ObservableCollection<Database>();
 
-        private  Timer _refreshTimer;
+        private Timer _refreshTimer;
         private const double RefreshIntervalMs = 30000;
 
         public DatabaseConnection(string connectionString)
         {
             ConnectionString = connectionString;
 
-            if (!string.IsNullOrEmpty(ConnectionString)) {
-                Connect();
+            if (!string.IsNullOrEmpty(ConnectionString))
+            {
+                StartRefreshCycle();
             }
         }
 
-        public void Connect()
+        /// <summary>
+        /// Começa o ciclo de atualização periódica (timer) e faz a carga inicial.
+        /// </summary>
+        public void StartRefreshCycle()
         {
-            // abre a única conexão
-            _conn = new MySqlConnection(ConnectionString);
-            _conn.Open();
+            // Timer para atualização periódica
+            //_refreshTimer = new Timer(RefreshIntervalMs) { AutoReset = true };
+            //_refreshTimer.Elapsed += (s, e) =>
+            //{
+            //    if (!StopRefresh)
+            //    {
+            //        SynchronizeChannels();
+            //    }
+            //};
+            //_refreshTimer.Start();
 
-            // timer para atualização periódica
-            _refreshTimer = new Timer(RefreshIntervalMs) { AutoReset = true };
-            _refreshTimer.Elapsed += (s, e) => SynchronizeChannels();
-            _refreshTimer.Start();
-            // primeira carga
+            // Primeira carga (sem thread pool conflitante)
             SynchronizeChannels();
             LoadDatabasesAndTables();
         }
 
-        /// <summary>Testa a conexão ao MySQL.</summary>
+        /// <summary>Testa a conexão ao MySQL abrindo e fechando imediatamente.</summary>
         public bool TestConnection()
         {
             try
             {
-                // testa numa conexão provisória
                 using var tmp = new MySqlConnection(ConnectionString);
                 tmp.Open();
                 return true;
@@ -81,6 +87,10 @@ namespace mysql_sync.Class
             }
         }
 
+        /// <summary>
+        /// Sincroniza os canais de replicação: abre CONEXÃO, executa SHOW SLAVE STATUS e consulta ERRORs,
+        /// depois popula ou atualiza o ObservableCollection Channels.
+        /// </summary>
         public void SynchronizeChannels()
         {
             if (StopRefresh) return;
@@ -89,35 +99,38 @@ namespace mysql_sync.Class
             {
                 var temp = new List<ReplicationChannel>();
 
-                // SHOW SLAVE STATUS
-                using (var cmd = new MySqlCommand("SHOW SLAVE STATUS", _conn))
-                using (var rdr = cmd.ExecuteReader())
-                    while (rdr.Read())
+                // 1) Abre uma conexão temporária para SHOW SLAVE STATUS
+                using (var conn = new MySqlConnection(ConnectionString))
+                {
+                    conn.Open();
+                    using var cmd1 = new MySqlCommand("SHOW SLAVE STATUS", conn);
+                    using var rdr1 = cmd1.ExecuteReader();
+                    while (rdr1.Read())
                     {
-                        var name = rdr["Channel_Name"]?.ToString() ?? "";
+                        var name = rdr1["Channel_Name"]?.ToString() ?? "";
                         temp.Add(new ReplicationChannel
                         {
                             ChannelName = name,
                             SlaveStatus = new SlaveStatus
                             {
                                 ChannelName = name,
-                                SlaveIORunning = rdr["Slave_IO_Running"]?.ToString(),
-                                SlaveSQLRunning = rdr["Slave_SQL_Running"]?.ToString(),
-                                SecondsBehindMaster = rdr["Seconds_Behind_Master"] as long?
+                                SlaveIORunning = rdr1["Slave_IO_Running"]?.ToString(),
+                                SlaveSQLRunning = rdr1["Slave_SQL_Running"]?.ToString(),
+                                SecondsBehindMaster = rdr1["Seconds_Behind_Master"] as long?
                             }
                         });
                     }
+                    rdr1.Close();
 
-                // replication_applier_status_by_worker
-                using (var cmd = new MySqlCommand(
-                    "SELECT CHANNEL_NAME, WORKER_ID, APPLYING_TRANSACTION, LAST_ERROR_NUMBER, LAST_ERROR_MESSAGE " +
-                    "FROM performance_schema.replication_applier_status_by_worker " +
-                    "WHERE LAST_ERROR_MESSAGE <> ''",
-                    _conn))
-                using (var rdr = cmd.ExecuteReader())
-                    while (rdr.Read())
+                    // 2) Consulta performance_schema.replication_applier_status_by_worker
+                    using var cmd2 = new MySqlCommand(
+                        @"SELECT CHANNEL_NAME, WORKER_ID, APPLYING_TRANSACTION, LAST_ERROR_NUMBER, LAST_ERROR_MESSAGE
+                          FROM performance_schema.replication_applier_status_by_worker
+                          WHERE LAST_ERROR_MESSAGE <> ''", conn);
+                    using var rdr2 = cmd2.ExecuteReader();
+                    while (rdr2.Read())
                     {
-                        var ch = rdr["CHANNEL_NAME"]?.ToString() ?? "";
+                        var ch = rdr2["CHANNEL_NAME"]?.ToString() ?? "";
                         var channel = temp.FirstOrDefault(c => c.ChannelName == ch);
                         if (channel == null)
                         {
@@ -126,33 +139,49 @@ namespace mysql_sync.Class
                         }
                         channel.ApplierStatuses.Add(new ApplierStatus
                         {
-                            WorkerID = rdr["WORKER_ID"] as int? ?? 0,
-                            ApplyngTransaction = rdr["APPLYING_TRANSACTION"]?.ToString(),
-                            LastErrorNumber = rdr["LAST_ERROR_NUMBER"] as int? ?? 0,
-                            LastErrorMessage = rdr["LAST_ERROR_MESSAGE"]?.ToString()
+                            WorkerID = rdr2["WORKER_ID"] as int? ?? 0,
+                            ApplyngTransaction = rdr2["APPLYING_TRANSACTION"]?.ToString(),
+                            LastErrorNumber = rdr2["LAST_ERROR_NUMBER"] as int? ?? 0,
+                            LastErrorMessage = rdr2["LAST_ERROR_MESSAGE"]?.ToString()
                         });
                     }
-
-                // Sincroniza a coleção com o resultado
-                // Remove ausentes
-                for (int i = Channels.Count - 1; i >= 0; i--)
-                    if (!temp.Any(t => t.ChannelName == Channels[i].ChannelName))
-                        Channels.RemoveAt(i);
-
-                // Adiciona ou atualiza existentes
-                foreach (var t in temp)
-                {
-                    var exist = Channels.FirstOrDefault(c => c.ChannelName == t.ChannelName);
-                    if (exist == null)
-                        Channels.Add(t);
-                    else
-                    {
-                        exist.SlaveStatus = t.SlaveStatus;
-                        exist.ApplierStatuses.Clear();
-                        foreach (var ap in t.ApplierStatuses)
-                            exist.ApplierStatuses.Add(ap);
-                    }
+                    rdr2.Close();
                 }
+
+                Channels.Clear();
+                foreach (var item in temp.ToArray())
+                {
+                    Channels.Add(item);
+                }
+                
+
+                //// 3) Atualiza o ObservableCollection Channels de forma fosse responsável pela UI thread
+                //// Remove ausentes
+                //for (int i = Channels.Count - 1; i >= 0; i--)
+                //{
+                //    if (!temp.Any(t => t.ChannelName == Channels[i].ChannelName))
+                //        Channels.RemoveAt(i);
+                //}
+
+                //// Adiciona ou atualiza existentes
+                //foreach (var t in temp)
+                //{
+                //    var exist = Channels.FirstOrDefault(c => c.ChannelName == t.ChannelName);
+                //    if (exist == null)
+                //    {
+                //        Channels.Add(t);
+                //    }
+                //    else
+                //    {
+                //        exist.SlaveStatus.SlaveSQLRunning = t.SlaveStatus.SlaveSQLRunning;
+                //        exist.SlaveStatus.SlaveIORunning = t.SlaveStatus.SlaveIORunning;
+                //        exist.SlaveStatus.SecondsBehindMaster = t.SlaveStatus.SecondsBehindMaster;
+
+                //        exist.ApplierStatuses.Clear();
+                //        foreach (var ap in t.ApplierStatuses.ToArray())
+                //            exist.ApplierStatuses.Add(ap);
+                //    }
+                //}
             }
             catch (Exception ex)
             {
@@ -160,34 +189,35 @@ namespace mysql_sync.Class
             }
         }
 
-        // <summary>
-        /// Carrega todos os bancos e tabelas (com colunas e PKs) de forma otimizada.
+        /// <summary>
+        /// Carrega todos os bancos e tabelas (com colunas e PKs) em background,
+        /// abrindo/fechando conexão a cada chamada.
         /// </summary>
         public void LoadDatabasesAndTables()
         {
             try
             {
-                // 1) Puxa tudo de uma vez do information_schema
-                var rows = new List<(
-                    string Schema,
-                    string Table,
-                    string Column,
-                    string DataType,
-                    bool IsPk)>();
+                var rows = new List<(string Schema, string Table, string Column, string DataType, bool IsPk)>();
 
                 const string sql = @"
-                    SELECT 
-                      TABLE_SCHEMA, 
-                      TABLE_NAME, 
-                      COLUMN_NAME, 
-                      COLUMN_TYPE, 
-                      COLUMN_KEY 
-                    FROM information_schema.COLUMNS
-                    WHERE TABLE_SCHEMA 
-                      NOT IN ('mysql','information_schema','performance_schema','sys');";
+                    SELECT c.TABLE_SCHEMA,
+                           c.TABLE_NAME,
+                           c.COLUMN_NAME,
+                           c.COLUMN_TYPE,
+                           c.COLUMN_KEY
+                      FROM information_schema.COLUMNS AS c
+                      JOIN information_schema.TABLES AS t
+                        ON c.TABLE_SCHEMA = t.TABLE_SCHEMA
+                       AND c.TABLE_NAME   = t.TABLE_NAME
+                     WHERE c.TABLE_SCHEMA
+                       NOT IN ('mysql','information_schema','performance_schema','sys')
+                       AND t.TABLE_TYPE = 'BASE TABLE';";
 
-                using (var cmd = new MySqlCommand(sql, _conn))
-                using (var rdr = cmd.ExecuteReader())
+                using (var conn = new MySqlConnection(ConnectionString))
+                {
+                    conn.Open();
+                    using var cmd = new MySqlCommand(sql, conn);
+                    using var rdr = cmd.ExecuteReader();
                     while (rdr.Read())
                     {
                         rows.Add((
@@ -198,8 +228,10 @@ namespace mysql_sync.Class
                             rdr.GetString("COLUMN_KEY") == "PRI"
                         ));
                     }
+                    rdr.Close();
+                }
 
-                // 2) Agrupa por schema e processa cada grupo em paralelo
+                // Agrupa e monta objetos Database/Table em paralelo
                 var dbList = rows
                     .GroupBy(r => r.Schema)
                     .AsParallel()
@@ -207,30 +239,26 @@ namespace mysql_sync.Class
                     {
                         var dbInfo = new Database(schemaGroup.Key);
 
-                        // dentro de cada schema, agrupa por tabela (sequencial—já é em memória)
                         foreach (var tableGroup in schemaGroup.GroupBy(r => r.Table))
                         {
                             var tbl = new Table(tableGroup.Key, dbInfo);
-
-                            // adiciona colunas
                             foreach (var row in tableGroup)
-                                tbl.Columns.Add(
-                                    new Column(
-                                      row.Column,
-                                      row.DataType,
-                                      row.IsPk
-                                    )
-                                );
-
+                            {
+                                tbl.Columns.Add(new Column(
+                                    row.Column,
+                                    row.DataType,
+                                    row.IsPk
+                                ));
+                            }
                             dbInfo.Objects.Add(tbl);
                         }
 
                         return dbInfo;
                     })
-                    .OrderBy(db => db.Name)  // opcional: ordena alfabeticamente
+                    .OrderBy(db => db.Name)
                     .ToList();
 
-                // 3) Atualiza o ObservableCollection na ordem correta (UI thread)
+                // Atualiza ObservableCollection na ordem correta (UI thread)
                 Databases.Clear();
                 foreach (var db in dbList)
                     Databases.Add(db);
@@ -242,31 +270,48 @@ namespace mysql_sync.Class
         }
 
 
+        /// <summary>
+        /// Ignora o erro no canal de replicação (skip),
+        /// usando uma nova conexão em cada ExecuteNonQuery.
+        /// </summary>
         public bool SkipError(ReplicationChannel channel)
         {
+            var chn = Channels.SingleOrDefault(x => x.ChannelName == channel.ChannelName);
+            if (chn?.ApplierStatuses.Count == 0)
+                return false;
+
             StopRefresh = true;
             try
             {
-                if (channel?.ApplierStatuses.Count == 0)
-                    return false;
+                List<string> sqls = new List<string>();
 
-                // STOP SLAVE
-                ExecuteNonQuery($"STOP SLAVE FOR CHANNEL '{channel.ChannelName}';");
+                sqls.Add($"STOP SLAVE FOR CHANNEL '{chn.ChannelName}';");
+                sqls.Add("SET sql_log_bin = OFF;");
+                sqls.Add($"SET GTID_NEXT = '{chn.ApplierStatuses[0].ApplyngTransaction}';");
+                sqls.Add("BEGIN;");
+                sqls.Add("COMMIT;");
+                sqls.Add("SET GTID_NEXT = 'AUTOMATIC';");
+                sqls.Add("SET sql_log_bin = ON;");
+                sqls.Add($"START SLAVE FOR CHANNEL '{chn.ChannelName}';");
 
-                // desliga binlog para não replicar o skip
-                ExecuteNonQuery("SET sql_log_bin = OFF;");
+                ExecuteNonQueryBatch( sqls );
+                //// STOP SLAVE
+                //ExecuteNonQuery($"STOP SLAVE FOR CHANNEL '{chn.ChannelName}';");
 
-                // pula o GTID exato
-                ExecuteNonQuery($"SET GTID_NEXT = '{channel.ApplierStatuses[0].ApplyngTransaction}';");
-                ExecuteNonQuery("BEGIN;");
-                ExecuteNonQuery("COMMIT;");
-                ExecuteNonQuery("SET GTID_NEXT = 'AUTOMATIC';");
+                //// Desliga o binlog para não replicar o skip
+                //ExecuteNonQuery("SET sql_log_bin = OFF;");
 
-                // reativa binlog
-                ExecuteNonQuery("SET sql_log_bin = ON;");
+                //// Pula o GTID exato
+                //ExecuteNonQuery($"SET GTID_NEXT = '{chn.ApplierStatuses[0].ApplyngTransaction}';");
+                //ExecuteNonQuery("BEGIN;");
+                //ExecuteNonQuery("COMMIT;");
+                //ExecuteNonQuery("SET GTID_NEXT = 'AUTOMATIC';");
 
-                // START SLAVE
-                ExecuteNonQuery($"START SLAVE FOR CHANNEL '{channel.ChannelName}';");
+                //// Reativa binlog
+                //ExecuteNonQuery("SET sql_log_bin = ON;");
+
+                //// START SLAVE
+                //ExecuteNonQuery($"START SLAVE FOR CHANNEL '{chn.ChannelName}';");
 
                 return true;
             }
@@ -278,41 +323,118 @@ namespace mysql_sync.Class
             finally
             {
                 StopRefresh = false;
-                // sempre atualiza depois do skip
+                // Atualiza imediatamente após o skip
                 SynchronizeChannels();
             }
         }
 
-        // helper para executar comando sem recriar conexão
+        /// <summary>
+        /// Executa um comando NON-QUERY (INSERT/UPDATE/DELETE/etc),
+        /// abrindo e fechando conexão a cada invocação.
+        /// </summary>
         private void ExecuteNonQuery(string sql)
         {
-            using var cmd = new MySqlCommand(sql, _conn);
+            using var conn = new MySqlConnection(ConnectionString);
+            conn.Open();
+            using var cmd = new MySqlCommand(sql, conn);
             cmd.ExecuteNonQuery();
+            conn.Close();
         }
 
         /// <summary>
-        /// Executa o SQL informado usando a conexão já aberta e retorna um DataTable.
+        /// Executa uma lista de comandos SQL em sequência usando UMA conexão apenas.
+        /// Se algum comando falhar, ele anota no console e continua para o próximo.
         /// </summary>
-        public DataTable ExecuteQuery(string sql)
+        public void ExecuteNonQueryBatch(IEnumerable<string> sqlCommands)
+        {
+            using var conn = new MySqlConnection(ConnectionString);
+            conn.Open();
+
+            foreach (var sql in sqlCommands)
+            {
+                try
+                {
+                    using var cmd = new MySqlCommand(sql, conn);
+                    cmd.ExecuteNonQuery();
+                }
+                catch (MySql.Data.MySqlClient.MySqlException mex)
+                {
+                    Console.WriteLine($"[Batch] Falha em: \"{sql}\" → {mex.Message}");
+                    // continua para o próximo sql
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Batch] Erro inesperado em: \"{sql}\" → {ex.Message}");
+                }
+            }
+            conn.Close();
+        }
+
+        /// <summary>
+        /// Executa a query de forma assíncrona, abrindo e fechando uma conexão nova a cada chamada.
+        /// Ideal para paralelismo com Task.WhenAll ou Parallel.ForEachAsync.
+        /// </summary>
+        /// <param name="sql">Comando SQL a ser executado.</param>
+        /// <param name="commandTimeoutSeconds">
+        /// Tempo, em segundos, que o comando pode levar antes de dar timeout (padrão 300s = 5min).
+        /// </param>
+        /// <param name="cancellationToken">Token para cancelamento opcional.</param>
+        /// <returns>DataTable com o resultado.</returns>
+        public async Task<DataTable> ExecuteQueryAsync(
+            string sql,
+            int commandTimeoutSeconds = 300,
+            CancellationToken cancellationToken = default)
         {
             var dt = new DataTable();
-            using (var cmd = new MySqlCommand(sql, _conn))
-            using (var reader = cmd.ExecuteReader(CommandBehavior.CloseConnection))
+
+            // Cada chamada “aluga” uma conexão do pool e a devolve ao fechar.
+            await using var conn = new MySqlConnection(ConnectionString);
+            await using var cmd = new MySqlCommand(sql, conn)
             {
-                dt.Load(reader);
-            }
+                CommandTimeout = commandTimeoutSeconds  // aumenta o tempo de espera
+            };
+
+            // Abre a conexão de forma assíncrona (pode também dar Timeout na própria Open se quiser)
+            await conn.OpenAsync(cancellationToken);
+
+            // Executa o reader de forma assíncrona
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+
+            // Carrega o resultado no DataTable (este Fill pode demorar, mas não usa cmd.CommandTimeout)
+            dt.Load(reader);
+
             return dt;
         }
 
+        /// <summary>Libera recursos e para o timer.</summary>
         public void Dispose()
         {
             _refreshTimer?.Stop();
             _refreshTimer?.Dispose();
+        }
 
-            // fecha conexão única
-            if (_conn?.State == System.Data.ConnectionState.Open)
-                _conn.Close();
-            _conn?.Dispose();
+        /// <summary>
+        /// Deleta uma linha de tabela sem replicar (usa SET sql_log_bin = OFF/ON),
+        /// abrindo/fechando conexão para cada comando.
+        /// </summary>
+        internal void DeleteRow(string tableName, string columnName, string key)
+        {
+            StopRefresh = true;
+            try
+            {
+                ExecuteNonQuery("SET sql_log_bin = OFF;");
+                ExecuteNonQuery($"DELETE FROM `{tableName}` WHERE `{columnName}` = {key};");
+                ExecuteNonQuery("SET sql_log_bin = ON;");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Erro ao deletar objeto {tableName}, {columnName} = {key} : {ex.Message}");
+            }
+            finally
+            {
+                StopRefresh = false;
+                SynchronizeChannels();
+            }
         }
     }
 

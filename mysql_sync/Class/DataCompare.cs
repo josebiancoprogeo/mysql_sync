@@ -11,23 +11,23 @@ public class DataCompare
     private readonly DatabaseConnection _master;
     private readonly DatabaseConnection _slave;
     private readonly Table _table;  // suposição: compara uma tabela por vez
-    private readonly IEnumerable<ColumnSelection> _columns;
+    private readonly IEnumerable<Column> _columns;
 
     public IReadOnlyList<ComparisonResult> Results { get; private set; }
 
     public DataCompare(
         DatabaseConnection masterConn,
         DatabaseConnection slaveConn,
-        Table table,
-        IEnumerable<ColumnSelection> columns)
+        Table table
+        )
     {
         _master = masterConn;
         _slave = slaveConn;
         _table = table;
-        _columns = columns.Where(c => c.IsSelected);
+        _columns = table.Columns.Where(c => c.IsSelected || c.IsPrimaryKey).ToList();
     }
 
-    public void Execute()
+    public async Task ExecuteAsync()
     {
         // 1) monta SELECT dinamicamente
         var pkCol = _columns.First(c => c.IsPrimaryKey).Name;
@@ -38,9 +38,15 @@ public class DataCompare
 
         var sql = $"SELECT {selectCols} FROM `{_table.Parent.Name}`.`{_table.Name}`";
 
-        // 2) executa nos dois lados
-        var masterDt = _master.ExecuteQuery(sql);
-        var slaveDt = _slave.ExecuteQuery(sql);
+        var masterTask = _master.ExecuteQueryAsync(sql);
+        var slaveTask = _slave.ExecuteQueryAsync(sql);
+
+        // aguarda ambas terminarem
+        await Task.WhenAll(masterTask, slaveTask);
+
+        // recupera os DataTables
+        DataTable masterDt = await masterTask;
+        DataTable slaveDt = await slaveTask;
 
         // 3) indexa por PK
         var masterDict = masterDt.Rows.Cast<DataRow>()
@@ -83,8 +89,14 @@ public class DataCompare
         Results = results;
     }
 
-    private DataTable LoadDataTable(DatabaseConnection conn, string sql)
+    private async Task<DataTable> LoadDataTableAsync(DatabaseConnection conn, string sql)
     {
-        return conn.ExecuteQuery(sql);
+        var dtTask = conn.ExecuteQueryAsync(sql);
+
+        await Task.WhenAll(dtTask);
+
+        DataTable Dt = await dtTask;
+
+        return Dt;
     }
 }

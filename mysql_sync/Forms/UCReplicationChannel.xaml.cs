@@ -59,7 +59,9 @@ namespace mysql_sync.Forms
 
         private void Refresh_Click(object sender, System.Windows.RoutedEventArgs e)
         {
+            ((Button)sender).IsEnabled = false;
             Connection?.Refresh();
+            ((Button)sender).IsEnabled = true;
         }
 
         private async void Skip_Click(object sender, System.Windows.RoutedEventArgs e)

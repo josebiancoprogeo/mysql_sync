@@ -17,7 +17,7 @@ namespace mysql_sync.Class
 
     public class ComparisonResult
     {
-        public object Key { get; set; }
+        public Object Key { get; set; }
         public DataRow MasterRow { get; set; }
         public DataRow SlaveRow { get; set; }
         public RowStatus Status { get; set; }
