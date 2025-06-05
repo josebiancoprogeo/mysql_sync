@@ -159,8 +159,20 @@ namespace mysql_sync.Forms
             RemoveRowFromGrid(r);
         }
 
-        private void UpdateSlaveFromMaster(ComparisonResult r) { /* implementar */ }
-        private void UpdateMasterFromSlave(ComparisonResult r) { /* implementar */ }
+        private void UpdateSlaveFromMaster(ComparisonResult r) 
+        {
+            var item = (TableListItem)lvTables.SelectedItem;
+            var tblResult = item.TableResult;
+            tblResult.UpdateSlave(r);
+            RemoveRowFromGrid(r);
+        }
+        private void UpdateMasterFromSlave(ComparisonResult r)
+        {
+            var item = (TableListItem)lvTables.SelectedItem;
+            var tblResult = item.TableResult;
+            tblResult.UpdateMaste(r);
+            RemoveRowFromGrid(r);
+        }
 
         // Remove a linha da grid e atualiza visualmente
         private void RemoveRowFromGrid(ComparisonResult r)

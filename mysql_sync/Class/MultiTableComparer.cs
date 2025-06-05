@@ -48,6 +48,22 @@ public class MultiTableComparer
         {
             Parent.deleteSlave(TableName, PrimaryKey.Name, key);
         }
+
+        internal void UpdateSlave(ComparisonResult r)
+        {
+            Parent.UpdateRowIntoSlave(
+               TableName,
+               r.Key.ToString()
+           );
+        }
+
+        internal void UpdateMaste(ComparisonResult r)
+        {
+            Parent.UpdateRowIntoMaster(
+                TableName,
+                r.Key.ToString()
+            );
+        }
     }
 
 
@@ -100,6 +116,28 @@ public class MultiTableComparer
             _slave.InsertRow(tab, rowData);
         }
         
+    }
+    #endregion
+
+    #region Update
+    private async void UpdateRowIntoMaster(string tableName, string key)
+    {
+        var tab = _tables.SingleOrDefault(x => x.Name == tableName);
+        if (tab != null)
+        {
+            var rowData = await _slave.SelectRowByIDAsync(tab, key);
+            _master.UpdateRow(tab, rowData);
+        }
+    }
+
+    private async void UpdateRowIntoSlave(string tableName, string key)
+    {
+        var tab = _tables.SingleOrDefault(x => x.Name == tableName);
+        if (tab != null)
+        {
+            var rowData = await _master.SelectRowByIDAsync(tab, key);
+            _slave.UpdateRow(tab, rowData);
+        }
     }
     #endregion
 

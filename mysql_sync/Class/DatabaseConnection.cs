@@ -541,7 +541,7 @@ namespace mysql_sync.Class
             // Constroi a cláusula INSERT
             string columnsJoined = string.Join(", ", columnNames);
             string valuesJoined = string.Join(", ", valueLiterals);
-            string sql = $"INSERT INTO `{tab.Name}` ({columnsJoined}) VALUES ({valuesJoined});";
+            string sql = $"INSERT INTO `{tab.Parent.Name}`.`{tab.Name}` ({columnsJoined}) VALUES ({valuesJoined});";
 
             // Executa em uma nova conexão (sem envolvimento de replicação)
             StopRefresh = true;
@@ -578,6 +578,145 @@ namespace mysql_sync.Class
             DataTable respDt = await ExecuteQueryAsync(sql);
 
             return (respDt.Rows.Count > 0) ? respDt.Rows[0] : null;
+        }
+
+        internal void UpdateRow(Table tab, DataRow rowData)
+        {
+            if (tab.Columns == null || tab.Columns.Count == 0)
+                throw new ArgumentException("Não há colunas selecionadas para inserção.");
+
+            // Monta lista de nomes de colunas e valores
+            var setAssignments = new List<string>();
+
+            var Pkcolumn = new List<string>();
+            var PKvalue = new List<string>();
+
+
+            foreach (var col in tab.Columns)
+            {
+                string colName = col.Name;
+
+                var dataTypeLower = col.DataType.ToLowerInvariant();
+                var rawValue = rowData[colName];
+                string val = "";
+                // Se for NULL no DataRow:
+                if (rawValue == DBNull.Value)
+                {
+                    //valueLiterals.Add("NULL");
+                    val = "NULL";
+                }
+
+                // 1) Coluna geometry (por exemplo: "point", "linestring", "polygon", etc)
+                if (dataTypeLower.Contains("geometry")
+                    || dataTypeLower.Contains("point")
+                    || dataTypeLower.Contains("linestring")
+                    || dataTypeLower.Contains("polygon"))
+                {
+                    // Trata apenas arrays de bytes (WKB)
+                    if (rawValue is byte[] arr)
+                    {
+                        // Se tem pelo menos 5 bytes, supomos que os primeiros 4 são SRID
+                        byte[] wkbPure;
+                        if (arr.Length > 4)
+                        {
+                            wkbPure = new byte[arr.Length - 4];
+                            Array.Copy(arr, 4, wkbPure, 0, wkbPure.Length);
+                            // Converte para hex (ex: "0x010203...")
+                            string hex = BitConverter.ToString(wkbPure).Replace("-", "");
+                            // Usa GeomFromWKB(hex, SRID) — aqui usamos SRID fixo 4326; ajuste se necessário
+                            //valueLiterals.Add($"St_SwapXY(ST_GeomFromWKB(0x{hex}, 4326))");
+                            val = $"St_SwapXY(ST_GeomFromWKB(0x{hex}, 4326))";
+                        }
+                        else
+                        {
+                            // WKB inválido ou sem conteúdo; insere NULL
+                            //valueLiterals.Add("NULL");
+                            val = "NULL";
+                            //continue;
+                        }
+
+
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException(
+                            $"Para coluna '{colName}' (geometry), esperava byte[]. Tipo recebido: {rawValue.GetType().Name}"
+                        );
+                    }
+                }
+                // 2) Coluna textual (string, datetime, etc)
+                else if (rawValue is string s)
+                {
+                    // Escapa aspas simples seguindo regra SQL
+                    string escaped = s.Replace("'", "''");
+                    //valueLiterals.Add($"'{escaped}'");
+                    val = $"'{escaped}'";
+                }
+                // 3) DataTime
+                else if (rawValue is DateTime dt)
+                {
+                    string fmt = dt.ToString("yyyy-MM-dd HH:mm:ss");
+                    //valueLiterals.Add($"'{fmt}'");
+                    val = $"'{fmt}'";
+                }
+                // 4) Numérico (int, long, decimal, double, etc)
+                else if (rawValue is IFormattable num)
+                {
+                    // Directamente a ToString usando InvariantCulture
+                    //valueLiterals.Add(num.ToString(null, System.Globalization.CultureInfo.InvariantCulture));
+                    val = num.ToString(null, System.Globalization.CultureInfo.InvariantCulture);
+                }
+                // 5) Booleano
+                else if (rawValue is bool b)
+                {
+                    //valueLiterals.Add(b ? "1" : "0");
+                    val = b ? "1" : "0";
+                }
+                // 6) Qualquer outro tipo convertido para string e entre aspas
+                else
+                {
+                    string rawEscaped = rawValue.ToString().Replace("'", "''");
+                    //valueLiterals.Add($"'{rawEscaped}'");
+                    val = $"'{rawEscaped}'";
+                }
+
+                if (col.IsPrimaryKey)
+                {
+                    PKvalue.Add($"`{colName}` = {val}");
+                } else
+                {
+                    setAssignments.Add($"`{colName}` = {val}");
+                }
+
+            }
+
+            if (PKvalue.Count == 0)
+                throw new InvalidOperationException("Não foi encontrada chave primária na tabela.");
+
+            // Constroi a cláusula INSERT
+            string setClause = string.Join(", ", setAssignments);
+            string whereClause = string.Join(" and ", PKvalue);
+            string sql = $"UPDATE `{tab.Parent.Name}`.`{tab.Name}` SET {setClause} where {whereClause}  ;";
+
+            // Executa em uma nova conexão (sem envolvimento de replicação)
+            StopRefresh = true;
+            try
+            {
+                ExecuteNonQuery("SET sql_log_bin = OFF;");
+                ExecuteNonQuery(sql);
+                //ExecuteNonQuery("SET sql_log_bin = ON;");
+            }
+            catch (Exception ex)
+            {
+
+                Console.WriteLine($"[InsertRow] Erro ao inserir em {tab.Name}: {ex.Message}\nSQL: {sql}");
+            }
+            finally
+            {
+                ExecuteNonQuery("SET sql_log_bin = ON;");
+                StopRefresh = false;
+                SynchronizeChannels();
+            }
         }
     }
 }
