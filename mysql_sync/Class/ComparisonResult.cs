@@ -21,5 +21,6 @@ namespace mysql_sync.Class
         public DataRow MasterRow { get; set; }
         public DataRow SlaveRow { get; set; }
         public RowStatus Status { get; set; }
+        public bool IsSelected { get; set; }
     }
 }

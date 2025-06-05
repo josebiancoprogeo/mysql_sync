@@ -57,7 +57,7 @@ public class MultiTableComparer
            );
         }
 
-        internal void UpdateMaste(ComparisonResult r)
+        internal void UpdateMaster(ComparisonResult r)
         {
             Parent.UpdateRowIntoMaster(
                 TableName,

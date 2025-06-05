@@ -3,26 +3,70 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Resultado da Comparação" Height="600" Width="1000">
     <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <!-- Linha 0: ListView + DataGrid -->
+            <RowDefinition Height="Auto"/>
+            <!-- Linha 1: Botões de ação -->
+        </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="200"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
+        <!-- Coluna 0 (Tabela de tabelas) -->
         <ListView x:Name="lvTables"
-                  Grid.Column="0"
-                  DisplayMemberPath="TableDisplay"
-                  SelectionChanged="lvTables_SelectionChanged"/>
+                 Grid.Row="0" Grid.Column="0"
+                 DisplayMemberPath="TableDisplay"
+                 SelectionChanged="lvTables_SelectionChanged"/>
 
+        <!-- Coluna 1 (Grid de linhas a comparar) -->
         <DataGrid x:Name="dgDetails"
-                  Grid.Column="1"
-                  AutoGenerateColumns="False"
-                  IsReadOnly="True">
+                 Grid.Row="0" Grid.Column="1"
+                 AutoGenerateColumns="False"
+                 IsReadOnly="false">
             <DataGrid.RowStyle>
                 <Style TargetType="DataGridRow">
                     <EventSetter Event="ContextMenuOpening"
-                                 Handler="dgRow_ContextMenuOpening"/>
+                                Handler="dgRow_ContextMenuOpening"/>
                 </Style>
             </DataGrid.RowStyle>
+
+            <!-- 1) Primeira coluna: Checkbox para marcar ação em massa -->
+            <DataGrid.Columns>
+                <DataGridCheckBoxColumn 
+                   Header="✓" 
+                   Binding="{Binding IsSelected, Mode=TwoWay}" 
+                   Width="30"/>
+                <!-- As demais colunas (PK, Status, M_col, S_col) serão adicionadas via code-behind -->
+            </DataGrid.Columns>
         </DataGrid>
+
+        <!-- Linha 1: botões para ação em massa -->
+        <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                   Orientation="Horizontal"
+                   HorizontalAlignment="Right"
+                   Margin="0,10,0,0">
+            <Button x:Name="btnInsertSelected"
+                   Content="Insert Selected"
+                   Width="120"
+                   Margin="0,0,10,0"
+                   Click="btnInsertSelected_Click"/>
+            <Button x:Name="btnDeleteSelected"
+                   Content="Delete Selected"
+                   Margin="0,0,10,0"
+                   Width="120"
+                   Click="btnDeleteSelected_Click"/>
+            <Button x:Name="btnUpdateSlave"
+                   Content="Update Slave"
+                   Width="120"
+                   Margin="0,0,10,0"
+                   Click="btnUpdateSelected_Click"/>
+            <Button x:Name="btnUpdateMaster"
+                   Content="Update Master"
+                   Width="120"
+                   Margin="0,0,10,0"
+                   Click="btnUpdateSelected_Click"/>
+        </StackPanel>
     </Grid>
 </Window>

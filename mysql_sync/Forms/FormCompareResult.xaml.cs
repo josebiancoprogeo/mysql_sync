@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 
 namespace mysql_sync.Forms
 {
@@ -48,21 +49,41 @@ namespace mysql_sync.Forms
 
             dgDetails.Columns.Clear();
 
+            // 1) Coluna de checkbox com “Check All” no header
+            var headerChk = new CheckBox
+            {
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            headerChk.Checked += HeaderChk_Checked;
+            headerChk.Unchecked += HeaderChk_Unchecked;
+
+            var chkColumn = new DataGridCheckBoxColumn
+            {
+                Header = headerChk,
+                Binding = new System.Windows.Data.Binding("IsSelected"),
+                Width = 30,
+                IsReadOnly = false
+            };
+            dgDetails.Columns.Add(chkColumn);
+
             // PK
             dgDetails.Columns.Add(new DataGridTextColumn
             {
                 Header = "PK",
-                Binding = new System.Windows.Data.Binding("Key")
+                Binding = new System.Windows.Data.Binding("Key"),
+                IsReadOnly = true
             });
 
             // Status
             dgDetails.Columns.Add(new DataGridTextColumn
             {
                 Header = "Status",
-                Binding = new System.Windows.Data.Binding("Status")
+                Binding = new System.Windows.Data.Binding("Status"),
+                IsReadOnly = true
             });
 
-            
+
             // Colunas selecionadas
             if (tblResult.SelectedColumns != null)
             {
@@ -71,12 +92,16 @@ namespace mysql_sync.Forms
                     dgDetails.Columns.Add(new DataGridTextColumn
                     {
                         Header = $"M_{col.Name}",
-                        Binding = new System.Windows.Data.Binding($"MasterRow[{col.Name}]")
+                        Binding = new System.Windows.Data.Binding($"MasterRow[{col.Name}]"),
+                        IsReadOnly = true
                     });
                     dgDetails.Columns.Add(new DataGridTextColumn
                     {
                         Header = $"S_{col.Name}",
-                        Binding = new System.Windows.Data.Binding($"SlaveRow[{col.Name}]")
+                        Binding = new System.Windows.Data.Binding($"SlaveRow[{col.Name}]"), 
+                        IsReadOnly = true
+
+                        
                     });
                 }
             }
@@ -84,6 +109,35 @@ namespace mysql_sync.Forms
             dgDetails.ItemsSource = tblResult.Rows
                 .Where(r => r.Status != RowStatus.Equal)
                 .ToList();
+        }
+
+        /// <summary>
+        /// Marca todas as linhas atuais do DataGrid como IsSelected = true.
+        /// </summary>
+        private void HeaderChk_Checked(object sender, RoutedEventArgs e)
+        {
+            if (!(lvTables.SelectedItem is TableListItem currentItem)) return;
+            var rows = currentItem.TableResult.Rows;
+
+            foreach (var r in rows)
+                r.IsSelected = true;
+
+            // Como ItemsSource é uma lista nova a cada Select, basta chamar Refresh:
+            dgDetails.Items.Refresh();
+        }
+
+        /// <summary>
+        /// Desmarca todas as linhas atuais do DataGrid (IsSelected = false).
+        /// </summary>
+        private void HeaderChk_Unchecked(object sender, RoutedEventArgs e)
+        {
+            if (!(lvTables.SelectedItem is TableListItem currentItem)) return;
+            var rows = currentItem.TableResult.Rows;
+
+            foreach (var r in rows)
+                r.IsSelected = false;
+
+            dgDetails.Items.Refresh();
         }
 
         // Handle ao clicar com botão direito na linha
@@ -122,9 +176,11 @@ namespace mysql_sync.Forms
             return mi;
         }
 
-        private void DeleteFromSlave(ComparisonResult r) {
+        private void DeleteFromSlave(ComparisonResult r)
+        {
             var tab = _results.SingleOrDefault(x => x.TableName == r.SlaveRow.Table.TableName);
-            if (tab != null) {
+            if (tab != null)
+            {
                 tab.deleteSlave(r.Key.ToString());
                 Console.WriteLine(tab.ToString());
                 RemoveRowFromGrid(r);
@@ -159,7 +215,7 @@ namespace mysql_sync.Forms
             RemoveRowFromGrid(r);
         }
 
-        private void UpdateSlaveFromMaster(ComparisonResult r) 
+        private void UpdateSlaveFromMaster(ComparisonResult r)
         {
             var item = (TableListItem)lvTables.SelectedItem;
             var tblResult = item.TableResult;
@@ -170,7 +226,7 @@ namespace mysql_sync.Forms
         {
             var item = (TableListItem)lvTables.SelectedItem;
             var tblResult = item.TableResult;
-            tblResult.UpdateMaste(r);
+            tblResult.UpdateMaster(r);
             RemoveRowFromGrid(r);
         }
 
@@ -180,6 +236,66 @@ namespace mysql_sync.Forms
             var selected = (TableListItem)lvTables.SelectedItem;
             selected.TableResult.Rows.Remove(r);
             // Atualiza colunas e itens
+            lvTables_SelectionChanged(lvTables, null);
+        }
+
+
+        //
+        // ===== Métodos de ação em massa (botões) =====
+        //
+
+        private void btnInsertSelected_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(lvTables.SelectedItem is TableListItem item)) return;
+            var tblResult = item.TableResult;
+            // Para cada linha marcada, e que esteja OnlyInSlave, faz Insert no Master
+            var toProcess = tblResult.Rows.Where(r => r.IsSelected && r.Status == RowStatus.OnlyInSlave).ToList();
+            foreach (var r in toProcess)
+            {
+                if (r.Status == RowStatus.OnlyInMaster)
+                    tblResult.InsertSlave(r);
+                else
+                    tblResult.InsertMaster(r);
+                tblResult.Rows.Remove(r);
+            }
+            lvTables_SelectionChanged(lvTables, null);
+        }
+
+        private void btnUpdateSelected_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(sender is Button btn)) return;
+            bool updateMaster = btn.Name.Contains("Master", StringComparison.OrdinalIgnoreCase);
+
+            if (!(lvTables.SelectedItem is TableListItem item)) return;
+            var tblResult = item.TableResult;
+            // Linhas marcadas e com Status = Different
+            var toProcess = tblResult.Rows.Where(r => r.IsSelected && r.Status == RowStatus.Different).ToList();
+            foreach (var r in toProcess)
+            {
+                // Atualiza Slave a partir de Master
+                if (updateMaster)
+                    tblResult.UpdateMaster(r);
+                else
+                    tblResult.UpdateSlave(r);
+                tblResult.Rows.Remove(r);
+            }
+            lvTables_SelectionChanged(lvTables, null);
+        }
+
+        private void btnDeleteSelected_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(lvTables.SelectedItem is TableListItem item)) return;
+            var tblResult = item.TableResult;
+            // Linhas marcadas: podem ser OnlyInMaster ou OnlyInSlave
+            var toProcess = tblResult.Rows.Where(r => r.IsSelected && (r.Status == RowStatus.OnlyInMaster || r.Status == RowStatus.OnlyInSlave)).ToList();
+            foreach (var r in toProcess)
+            {
+                if (r.Status == RowStatus.OnlyInMaster)
+                    tblResult.deleteMaster(r.Key.ToString()); // deleta do Slave
+                else // OnlyInSlave
+                    tblResult.deleteSlave(r.Key.ToString());
+                tblResult.Rows.Remove(r);
+            }
             lvTables_SelectionChanged(lvTables, null);
         }
     }
