@@ -9,7 +9,7 @@ public class MultiTableComparer
         public string TableName { get; set; }
         public List<ComparisonResult> Rows { get; set; }
         public List<Column> SelectedColumns { get; set; }
-        public Column PrimaryKey { get; set; }
+        public List<Column> PrimaryKey { get; set; }
 
         public MultiTableComparer Parent { get; set; }
 
@@ -45,12 +45,22 @@ public class MultiTableComparer
 
         internal void deleteMaster(string key)
         {
-            Parent.deleteMaster(TableName, PrimaryKey.Name, key);
+            if (PrimaryKey.Count > 1)
+                Parent.deleteMaster(TableName, 
+                    "concat(" + String.Join(",'|',", PrimaryKey.Select(c => $"`{c.Name}`")) + ")",
+                    double.TryParse(key, out double result) ?  key : $"'{key}'");
+            else
+                Parent.deleteMaster(TableName, PrimaryKey[0].Name, key);
         }
 
         internal void deleteSlave(string key)
         {
-            Parent.deleteSlave(TableName, PrimaryKey.Name, key);
+            if (PrimaryKey.Count > 1)
+                Parent.deleteSlave(TableName, 
+                    "concat(" + String.Join(",'|',", PrimaryKey.Select(c => $"`{c.Name}`")) + ")",
+                    double.TryParse(key, out double result) ? key : $"'{key}'");
+            else
+                Parent.deleteSlave(TableName, PrimaryKey[0].Name, key); 
         }
 
         internal void UpdateSlave(ComparisonResult r)
@@ -172,7 +182,7 @@ public class MultiTableComparer
                 TableName = tbl.Name,
                 Rows = compare.Results.Where(x => x.Status != RowStatus.Equal).ToList(),
                 SelectedColumns = tbl.Columns.Where(x => x.IsSelected).ToList(),
-                PrimaryKey = tbl.Columns.SingleOrDefault(x => x.IsPrimaryKey),
+                PrimaryKey = tbl.Columns.Where(x => x.IsPrimaryKey).ToList(),
                 Parent = this
             });
         }

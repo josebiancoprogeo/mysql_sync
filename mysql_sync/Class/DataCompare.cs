@@ -36,11 +36,15 @@ public class DataCompare
             {
 
                 // 1) monta SELECT dinamicamente
-                var pkCol = _columns.First(c => c.IsPrimaryKey).Name;
+                var pkCols = _columns.Where(c => c.IsPrimaryKey).Select(c => c.Name).ToList();
                 var otherCols = _columns.Where(c => !c.IsPrimaryKey)
                                          .Select(c => $"`{c.Name}`");
-                var selectCols = $"`{pkCol}`"
-                               + (otherCols.Any() ? ", " + string.Join(", ", otherCols) : "");
+
+                var pkSelect = string.Join(", ", pkCols.Select(c => $"`{c}`"));
+                var otherSelect = string.Join(", ", _columns.Where(c => !c.IsPrimaryKey).Select(c => $"`{c.Name}`"));
+
+                var selectCols = pkSelect + 
+                            (string.IsNullOrEmpty(otherSelect) ? "" : ", " + otherSelect);
 
                 var sql = $"SELECT {selectCols} FROM `{_table.Parent.Name}`.`{_table.Name}`";
 
@@ -54,11 +58,13 @@ public class DataCompare
                 DataTable masterDt = await masterTask;
                 DataTable slaveDt = await slaveTask;
 
+                Func<DataRow, string> getKey = row => string.Join("|", pkCols.Select(c => (row[c] ?? "").ToString()));
+
                 // 3) indexa por PK
                 var masterDict = masterDt.Rows.Cast<DataRow>()
-                                  .ToDictionary(r => r[pkCol]);
+                                  .ToDictionary(r => getKey(r));
                 var slaveDict = slaveDt.Rows.Cast<DataRow>()
-                                  .ToDictionary(r => r[pkCol]);
+                                  .ToDictionary(r => getKey(r));
 
                 // 4) junta chaves
                 var allKeys = new HashSet<object>(masterDict.Keys);
@@ -67,14 +73,17 @@ public class DataCompare
                 
                 foreach (var key in allKeys)
                 {
-                    masterDict.TryGetValue(key, out var mRow);
-                    slaveDict.TryGetValue(key, out var sRow);
+                    masterDict.TryGetValue((string)key, out var mRow);
+                    slaveDict.TryGetValue((string)key, out var sRow);
 
                     var status = RowStatus.OnlyInMaster;
                     if (mRow != null && sRow != null)
                     {
                         // compara coluna a coluna
-                        var equal = _columns.All(c =>
+                        //var equal = _columns.All(c =>
+                        //    Equals(mRow[c.Name], sRow[c.Name]));
+                        //status = equal ? RowStatus.Equal : RowStatus.Different;
+                        bool equal = _columns.All(c =>
                             Equals(mRow[c.Name], sRow[c.Name]));
                         status = equal ? RowStatus.Equal : RowStatus.Different;
                     }

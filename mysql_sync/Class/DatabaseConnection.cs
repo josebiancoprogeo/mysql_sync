@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Data;
+using System.Diagnostics.Eventing.Reader;
 using System.Linq;
 using System.Threading.Channels;
 using static System.Runtime.InteropServices.JavaScript.JSType;
@@ -425,8 +426,8 @@ namespace mysql_sync.Class
             try
             {
                 ExecuteNonQuery("SET sql_log_bin = OFF;");
-                ExecuteNonQuery($"DELETE FROM `{tableName}` WHERE `{columnName}` = {key};");
-                ExecuteNonQuery("SET sql_log_bin = ON;");
+                ExecuteNonQuery($"DELETE FROM `{tableName}` WHERE {columnName} = {key};");
+
             }
             catch (Exception ex)
             {
@@ -434,6 +435,7 @@ namespace mysql_sync.Class
             }
             finally
             {
+                ExecuteNonQuery("SET sql_log_bin = ON;");
                 StopRefresh = false;
                 //SynchronizeChannels();
             }
@@ -567,12 +569,16 @@ namespace mysql_sync.Class
         internal async Task<DataRow> SelectRowByIDAsync(Table tab, string key)
         {
             // 1) monta SELECT dinamicamente
-            var pkCol = tab.Columns.First(c => c.IsPrimaryKey).Name;
-            var otherCols = tab.Columns.Where(c => !c.IsPrimaryKey).Select(c => $"`{c.Name}`");
-            var selectCols = $"`{pkCol}`"
-                           + (otherCols.Any() ? ", " + string.Join(", ", otherCols) : "");
+            string pkCol;
+            if (tab.Columns.Where(c => c.IsPrimaryKey).Count() > 1)
+                pkCol = "concat(" + string.Join(",'|',", tab.Columns.Where(c => c.IsPrimaryKey).Select(c => $"`{c.Name}`")) + ")";
+            else
+                pkCol = tab.Columns.First(c => c.IsPrimaryKey).Name;
 
-            var sql = $"SELECT {selectCols} FROM `{tab.Parent.Name}`.`{tab.Name}` WHERE `{pkCol}` = '{key}' limit 1";
+            var otherCols = tab.Columns.Select(c => $"`{c.Name}`");
+            var selectCols = string.Join(", ", otherCols) ;
+
+            var sql = $"SELECT {selectCols} FROM `{tab.Parent.Name}`.`{tab.Name}` WHERE {pkCol} = '{key}' limit 1";
 
             // recupera os DataTables
             DataTable respDt = await ExecuteQueryAsync(sql);

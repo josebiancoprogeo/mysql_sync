@@ -336,9 +336,11 @@ namespace mysql_sync
                         TableName = tbl.Name,
                         Rows = compare.Results.Where(r => r.Status != RowStatus.Equal).ToList(),
                         SelectedColumns = tbl.Columns.Where(c => c.IsSelected).ToList(),
-                        PrimaryKey = tbl.Columns.Single(c => c.IsPrimaryKey),
                         Parent = parentComparer
                     };
+
+                    if (tbl.Columns.Where(c => c.IsPrimaryKey).Count() > 0)
+                        tableResult.PrimaryKey = tbl.Columns.Where(c => c.IsPrimaryKey).ToList();
 
                     // Garante que a adição na ObservableCollection aconteça no UI thread
                     Application.Current.Dispatcher.Invoke(() =>
@@ -402,7 +404,7 @@ namespace mysql_sync
                         };
 
                         if (tbl.Columns.Where(c => c.IsPrimaryKey).Count() > 0)
-                            tr.PrimaryKey = tbl.Columns.Single(c => c.IsPrimaryKey);
+                            tr.PrimaryKey = tbl.Columns.Where(c => c.IsPrimaryKey).ToList();
 
                         Dispatcher.Invoke(() => incrementalResults.Add(tr));
                     }
