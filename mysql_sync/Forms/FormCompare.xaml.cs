@@ -1,9 +1,12 @@
 ﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using mysql_sync.Class;
+using System.Windows.Data;
 
 namespace mysql_sync.Forms
 {
@@ -13,6 +16,8 @@ namespace mysql_sync.Forms
 
 
         public Table SelectedTable => (Table)lvTables.SelectedItem;
+
+        private ObservableCollection<Column> _selectedColumn;
 
 
         // MUDAR AQUI: adicionamos o parâmetro databaseName
@@ -33,7 +38,32 @@ namespace mysql_sync.Forms
             {
                 // ALTERAÇÃO AQUI: bind direto às Column.IsSelected de cada Column
                 lvColumns.ItemsSource = tbl.Columns;
+                _selectedColumn = tbl.Columns;
             }
+        }
+
+        // Marca todas as colunas(exceto PKs que já vêm desabilitados)
+        private void chkSelectAllColumns_Checked(object sender, RoutedEventArgs e)
+        {
+            foreach (var cs in SelectedTable.Columns)
+            {
+                if (!cs.IsPrimaryKey)    // permite que PKs permaneçam sempre selecionadas/desativadas conforme
+                    cs.IsSelected = true;
+            }
+            // força o ListView de colunas a redesenhar todas as CheckBoxes
+            CollectionViewSource.GetDefaultView(lvColumns.ItemsSource).Refresh();
+        }
+
+        // Desmarca todas as colunas (exceto PKs)
+        private void chkSelectAllColumns_Unchecked(object sender, RoutedEventArgs e)
+        {
+            foreach (var cs in SelectedTable.Columns)
+            {
+                if (!cs.IsPrimaryKey)
+                    cs.IsSelected = false;
+            }
+            // força o ListView de colunas a redesenhar todas as CheckBoxes
+            CollectionViewSource.GetDefaultView(lvColumns.ItemsSource).Refresh();
         }
 
         private void btnCompare_Click(object sender, RoutedEventArgs e)

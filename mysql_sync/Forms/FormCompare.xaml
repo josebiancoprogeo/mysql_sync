@@ -4,12 +4,10 @@
         xmlns:local="clr-namespace:mysql_sync.Forms"
         Title="Comparar Tabelas" Height="450" Width="800">
     <Window.Resources>
-        <!-- converter para inverter bool (para desabilitar PK) -->
         <local:InverseBooleanConverter x:Key="InverseBooleanConverter"/>
     </Window.Resources>
 
     <Grid Margin="10">
-        <!-- Duas colunas, duas linhas (conteúdo + botões) -->
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="250"/>
             <ColumnDefinition Width="*"/>
@@ -21,42 +19,62 @@
             <!-- Botões -->
         </Grid.RowDefinitions>
 
-        <!-- ListView das tabelas (single‐select) -->
+        <!-- ListView das tabelas -->
         <ListView x:Name="lvTables"
                   Grid.Row="0" Grid.Column="0"
                   DisplayMemberPath="Name"
                   SelectionMode="Single"
                   SelectionChanged="lvTables_SelectionChanged"/>
 
-        <!-- ListView das colunas com CheckBox -->
-        <ListView x:Name="lvColumns"
-                  Grid.Row="0" Grid.Column="1">
-            <ListView.ItemTemplate>
-                <DataTemplate>
-                    <CheckBox Content="{Binding Name}"
-                              IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                              IsEnabled="{Binding IsPrimaryKey, Converter={StaticResource InverseBooleanConverter}}"/>
-                </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
+        <!-- Colunas: agora num Grid para ocupar todo o espaço -->
+        <Grid Grid.Row="0" Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <!-- Select All -->
+                <RowDefinition Height="*"/>
+                <!-- Lista de colunas -->
+            </Grid.RowDefinitions>
+
+            <!-- Select All -->
+            <CheckBox x:Name="chkSelectAllColumns"
+                      Content="Select All"
+                      Margin="7,0,0,5"
+                      Checked="chkSelectAllColumns_Checked"
+                      Unchecked="chkSelectAllColumns_Unchecked"/>
+
+            <!-- ListView que estica na linha 1 -->
+            <ListView x:Name="lvColumns"
+                      Grid.Row="1"
+                      VirtualizingStackPanel.IsVirtualizing="False"
+                      VerticalAlignment="Stretch"
+                      HorizontalAlignment="Stretch">
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <CheckBox Content="{Binding Name}"
+                                  IsChecked="{Binding IsSelected,Mode=TwoWay}"
+                                  IsEnabled="{Binding IsPrimaryKey, Converter={StaticResource InverseBooleanConverter}}"
+                                  HorizontalAlignment="Left"/>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+        </Grid>
 
         <!-- Botões de ação -->
         <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
-            Orientation="Horizontal"
-            HorizontalAlignment="Right"
-            Margin="0,10,0,0">
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,10,0,0">
             <Button x:Name="btnCompare"
-            Content="Compare"
-            Width="100"
-            IsDefault="True"
-            Click="btnCompare_Click"
-            Margin="0,0,10,0"/>
-            <!-- espaço à direita deste botão -->
+                    Content="Compare"
+                    Width="100"
+                    IsDefault="True"
+                    Click="btnCompare_Click"
+                    Margin="0,0,10,0"/>
             <Button x:Name="btnCancel"
-            Content="Cancel"
-            Width="100"
-            IsCancel="True"
-            Click="btnCancel_Click"/>
+                    Content="Cancel"
+                    Width="100"
+                    IsCancel="True"
+                    Click="btnCancel_Click"/>
         </StackPanel>
     </Grid>
 </Window>

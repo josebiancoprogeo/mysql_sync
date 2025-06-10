@@ -29,64 +29,76 @@ public class DataCompare
 
     public async Task ExecuteAsync()
     {
-        // 1) monta SELECT dinamicamente
-        var pkCol = _columns.First(c => c.IsPrimaryKey).Name;
-        var otherCols = _columns.Where(c => !c.IsPrimaryKey)
-                                 .Select(c => $"`{c.Name}`");
-        var selectCols = $"`{pkCol}`"
-                       + (otherCols.Any() ? ", " + string.Join(", ", otherCols) : "");
-
-        var sql = $"SELECT {selectCols} FROM `{_table.Parent.Name}`.`{_table.Name}`";
-
-        var masterTask = _master.ExecuteQueryAsync(sql);
-        var slaveTask = _slave.ExecuteQueryAsync(sql);
-
-        // aguarda ambas terminarem
-        await Task.WhenAll(masterTask, slaveTask);
-
-        // recupera os DataTables
-        DataTable masterDt = await masterTask;
-        DataTable slaveDt = await slaveTask;
-
-        // 3) indexa por PK
-        var masterDict = masterDt.Rows.Cast<DataRow>()
-                          .ToDictionary(r => r[pkCol]);
-        var slaveDict = slaveDt.Rows.Cast<DataRow>()
-                          .ToDictionary(r => r[pkCol]);
-
-        // 4) junta chaves
-        var allKeys = new HashSet<object>(masterDict.Keys);
-        allKeys.UnionWith(slaveDict.Keys);
-
-        var results = new List<ComparisonResult>(allKeys.Count);
-        foreach (var key in allKeys)
+        try
         {
-            masterDict.TryGetValue(key, out var mRow);
-            slaveDict.TryGetValue(key, out var sRow);
+            var results = new List<ComparisonResult>();
+            if (_columns.Where(c => c.IsPrimaryKey).Count() > 0)
+            {
 
-            var status = RowStatus.OnlyInMaster;
-            if (mRow != null && sRow != null)
-            {
-                // compara coluna a coluna
-                var equal = _columns.All(c =>
-                    Equals(mRow[c.Name], sRow[c.Name]));
-                status = equal ? RowStatus.Equal : RowStatus.Different;
-            }
-            else if (sRow != null)
-            {
-                status = RowStatus.OnlyInSlave;
-            }
+                // 1) monta SELECT dinamicamente
+                var pkCol = _columns.First(c => c.IsPrimaryKey).Name;
+                var otherCols = _columns.Where(c => !c.IsPrimaryKey)
+                                         .Select(c => $"`{c.Name}`");
+                var selectCols = $"`{pkCol}`"
+                               + (otherCols.Any() ? ", " + string.Join(", ", otherCols) : "");
 
-            results.Add(new ComparisonResult
-            {
-                Key = key,
-                MasterRow = mRow,
-                SlaveRow = sRow,
-                Status = status
-            });
+                var sql = $"SELECT {selectCols} FROM `{_table.Parent.Name}`.`{_table.Name}`";
+
+                var masterTask = _master.ExecuteQueryAsync(sql);
+                var slaveTask = _slave.ExecuteQueryAsync(sql);
+
+                // aguarda ambas terminarem
+                await Task.WhenAll(masterTask, slaveTask);
+
+                // recupera os DataTables
+                DataTable masterDt = await masterTask;
+                DataTable slaveDt = await slaveTask;
+
+                // 3) indexa por PK
+                var masterDict = masterDt.Rows.Cast<DataRow>()
+                                  .ToDictionary(r => r[pkCol]);
+                var slaveDict = slaveDt.Rows.Cast<DataRow>()
+                                  .ToDictionary(r => r[pkCol]);
+
+                // 4) junta chaves
+                var allKeys = new HashSet<object>(masterDict.Keys);
+                allKeys.UnionWith(slaveDict.Keys);
+
+                
+                foreach (var key in allKeys)
+                {
+                    masterDict.TryGetValue(key, out var mRow);
+                    slaveDict.TryGetValue(key, out var sRow);
+
+                    var status = RowStatus.OnlyInMaster;
+                    if (mRow != null && sRow != null)
+                    {
+                        // compara coluna a coluna
+                        var equal = _columns.All(c =>
+                            Equals(mRow[c.Name], sRow[c.Name]));
+                        status = equal ? RowStatus.Equal : RowStatus.Different;
+                    }
+                    else if (sRow != null)
+                    {
+                        status = RowStatus.OnlyInSlave;
+                    }
+
+                    results.Add(new ComparisonResult
+                    {
+                        Key = key,
+                        MasterRow = mRow,
+                        SlaveRow = sRow,
+                        Status = status
+                    });
+                }
+            }
+            Results = results;
         }
-
-        Results = results;
+        catch (Exception ex)
+        {
+            Results = null;
+            throw;
+        }
     }
 
     private async Task<DataTable> LoadDataTableAsync(DatabaseConnection conn, string sql)

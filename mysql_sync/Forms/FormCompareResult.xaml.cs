@@ -9,43 +9,96 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
+using System.Collections.ObjectModel;
 
 namespace mysql_sync.Forms
 {
     public partial class FormCompareResult : Window
     {
-        private readonly IList<MultiTableComparer.TableResult> _results;
+        private readonly ObservableCollection<MultiTableComparer.TableResult> _results;
+
+        public ObservableCollection<MultiTableComparer.TableResult> ResultsCollection => _results;
 
         public MultiTableComparer selectedTable;
 
-        public FormCompareResult(MultiTableComparer comparer)
+
+
+        public FormCompareResult(ObservableCollection<MultiTableComparer.TableResult> results, int totalTablesToCompare)
         {
             InitializeComponent();
 
             // Carrega resultados
-            _results = comparer.ResultsByTable?.ToList() ?? new List<MultiTableComparer.TableResult>();
-            if (_results.Count == 0)
+            _results = results ?? throw new ArgumentNullException(nameof(results));
+
+            // 1) Configura o painel “Comparando”:
+            pbCompare.Minimum = 0;
+            pbCompare.Maximum = totalTablesToCompare;
+            pbCompare.Value = 0;
+            tbCompareStatus.Text = $"Comparando 0/{totalTablesToCompare}";
+            PanelCompare.Visibility = Visibility.Visible;
+            // Sempre que adicionar um novo TableResult, incrementa o pbCompare e atualiza o texto
+            _results.CollectionChanged += (s, ev) =>
             {
-                MessageBox.Show("Não há resultados para exibir.");
-                Close();
-                return;
-            }
+                // Garante que estamos no UI Thread:
+                Dispatcher.Invoke(() =>
+                {
+                    pbCompare.Value = _results.Count;
+                    tbCompareStatus.Text = $"Comparando {_results.Count}/{totalTablesToCompare}";
 
-            // Popula lista de tabelas
+                    lvTables.ItemsSource = _results.Where(x => x.Rows.Count > 0);
+
+                    if (_results.Count >= totalTablesToCompare)
+                    {
+                        PanelCompare.Visibility = Visibility.Collapsed;
+                    }
+
+                    AjustarColunasDeProgresso();
+                });
+            };
+
+            // 2) O painel “Batch” começa oculto. Será mostrado quando o usuário clicar em algum botão:
+            PanelBatch.Visibility = Visibility.Collapsed;
+
+            // 3) Vincula a lista de tabelas e seleciona a primeira
             lvTables.DisplayMemberPath = "TableDisplay";
-            lvTables.ItemsSource = _results
-                .Select(tr => new TableListItem(tr))
-                .ToList();
+            lvTables.ItemsSource = _results.Where(x => x.Rows.Count > 0);
+            if (_results.Count > 0)
+                lvTables.SelectedIndex = 0;
+        }
 
-            // Seleciona a primeira tabela
-            lvTables.SelectedIndex = 0;
+        // Reajusta as larguras das colunas de progresso conforme visibilidades
+        private void AjustarColunasDeProgresso()
+        {
+            //// Se ambos os painéis estiverem visíveis, cada um ocupa metade
+            //if (PanelCompare.Visibility == Visibility.Visible
+            //    && PanelBatch.Visibility == Visibility.Visible)
+            //{
+            //    ColCompare.Width = new GridLength(1, GridUnitType.Star);
+            //    ColBatch.Width = new GridLength(1, GridUnitType.Star);
+            //}
+            //// Se apenas “Comparando” estiver visível, ocupa todo o espaço
+            //else if (PanelCompare.Visibility == Visibility.Visible)
+            //{
+            //    ColCompare.Width = new GridLength(1, GridUnitType.Star);
+            //    ColBatch.Width = new GridLength(0, GridUnitType.Pixel);
+            //}
+            //// Se apenas “Batch” estiver visível, ocupa todo o espaço
+            //else if (PanelBatch.Visibility == Visibility.Visible)
+            //{
+            //    ColCompare.Width = new GridLength(0, GridUnitType.Pixel);
+            //    ColBatch.Width = new GridLength(1, GridUnitType.Star);
+            //}
+            //// Se nenhum estiver visível, escondemos ambos
+            //else
+            //{
+            //    ColCompare.Width = new GridLength(0, GridUnitType.Pixel);
+            //    ColBatch.Width = new GridLength(0, GridUnitType.Pixel);
+            //}
         }
 
         private void lvTables_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (!(lvTables.SelectedItem is TableListItem item)) return;
-            var tblResult = item.TableResult;
-            if (tblResult == null) return;
+            if (!(lvTables.SelectedItem is MultiTableComparer.TableResult tblResult)) return;
 
             dgDetails.Columns.Clear();
 
@@ -83,8 +136,7 @@ namespace mysql_sync.Forms
                 IsReadOnly = true
             });
 
-
-            // Colunas selecionadas
+            // Colunas selecionadas (M_ e S_)
             if (tblResult.SelectedColumns != null)
             {
                 foreach (var col in tblResult.SelectedColumns)
@@ -98,10 +150,8 @@ namespace mysql_sync.Forms
                     dgDetails.Columns.Add(new DataGridTextColumn
                     {
                         Header = $"S_{col.Name}",
-                        Binding = new System.Windows.Data.Binding($"SlaveRow[{col.Name}]"), 
+                        Binding = new System.Windows.Data.Binding($"SlaveRow[{col.Name}]"),
                         IsReadOnly = true
-
-                        
                     });
                 }
             }
@@ -116,13 +166,20 @@ namespace mysql_sync.Forms
         /// </summary>
         private void HeaderChk_Checked(object sender, RoutedEventArgs e)
         {
-            if (!(lvTables.SelectedItem is TableListItem currentItem)) return;
-            var rows = currentItem.TableResult.Rows;
+            if (!(lvTables.SelectedItem is MultiTableComparer.TableResult currentTable)) return;
+            var selectedRows = dgDetails.SelectedItems.Cast<ComparisonResult>().ToList();
 
-            foreach (var r in rows)
-                r.IsSelected = true;
+            if (selectedRows.Count > 1)
+            {
+                foreach (var r in selectedRows)
+                    r.IsSelected = true;
+            }
+            else
+            {
+                foreach (var r in currentTable.Rows.Where(r => r.Status != RowStatus.Equal))
+                    r.IsSelected = true;
+            }
 
-            // Como ItemsSource é uma lista nova a cada Select, basta chamar Refresh:
             dgDetails.Items.Refresh();
         }
 
@@ -131,11 +188,19 @@ namespace mysql_sync.Forms
         /// </summary>
         private void HeaderChk_Unchecked(object sender, RoutedEventArgs e)
         {
-            if (!(lvTables.SelectedItem is TableListItem currentItem)) return;
-            var rows = currentItem.TableResult.Rows;
+            if (!(lvTables.SelectedItem is MultiTableComparer.TableResult currentTable)) return;
+            var selectedRows = dgDetails.SelectedItems.Cast<ComparisonResult>().ToList();
 
-            foreach (var r in rows)
-                r.IsSelected = false;
+            if (selectedRows.Count > 1)
+            {
+                foreach (var r in selectedRows)
+                    r.IsSelected = false;
+            }
+            else
+            {
+                foreach (var r in currentTable.Rows.Where(r => r.Status != RowStatus.Equal))
+                    r.IsSelected = false;
+            }
 
             dgDetails.Items.Refresh();
         }
@@ -244,58 +309,150 @@ namespace mysql_sync.Forms
         // ===== Métodos de ação em massa (botões) =====
         //
 
-        private void btnInsertSelected_Click(object sender, RoutedEventArgs e)
+        private async void btnInsertSelected_Click(object sender, RoutedEventArgs e)
         {
-            if (!(lvTables.SelectedItem is TableListItem item)) return;
-            var tblResult = item.TableResult;
-            // Para cada linha marcada, e que esteja OnlyInSlave, faz Insert no Master
-            var toProcess = tblResult.Rows.Where(r => r.IsSelected && r.Status == RowStatus.OnlyInSlave).ToList();
-            foreach (var r in toProcess)
+            if (!(lvTables.SelectedItem is MultiTableComparer.TableResult tblResult)) return;
+            //var tblResult = item.TableResult;
+
+            var toProcess = tblResult.Rows
+                             .Where(r => r.IsSelected && r.Status != RowStatus.Different)
+                             .ToList();
+            if (toProcess.Count == 0) return;
+
+            // 1) Exibe o painel Batch e ajusta colunas
+            PanelBatch.Visibility = Visibility.Visible;
+            //AjustarColunasDeProgresso();
+
+            // 2) Configura o texto e a barra
+            pbBatch.Minimum = 0;
+            pbBatch.Maximum = toProcess.Count;
+            pbBatch.Value = 0;
+            tbBatchStatus.Text = $"Inserindo 0/{toProcess.Count}";
+            await Task.Run(() =>
             {
-                if (r.Status == RowStatus.OnlyInMaster)
-                    tblResult.InsertSlave(r);
-                else
-                    tblResult.InsertMaster(r);
-                tblResult.Rows.Remove(r);
-            }
+                // 3) Loop de inserções
+                for (int i = 0; i < toProcess.Count; i++)
+                {
+                    var r = toProcess[i];
+                    if (r.Status == RowStatus.OnlyInSlave)
+                        tblResult.InsertMaster(r);
+                    else
+                        tblResult.InsertSlave(r);
+
+                    // Toda UI update pelo Dispatcher
+                    Dispatcher.Invoke(() =>
+                    {
+                        tblResult.Rows.Remove(r);
+                        pbBatch.Value = i + 1;
+                        tbBatchStatus.Text = $"Inserindo {i + 1}/{toProcess.Count}";
+                    });
+                }
+            });
+
+
+            // 4) Finaliza: esconde painel Batch e ajusta colunas
+            PanelBatch.Visibility = Visibility.Collapsed;
+            //AjustarColunasDeProgresso();
+
+            // 5) Atualiza grid
             lvTables_SelectionChanged(lvTables, null);
         }
 
-        private void btnUpdateSelected_Click(object sender, RoutedEventArgs e)
+        private async void btnUpdateSelected_Click(object sender, RoutedEventArgs e)
         {
             if (!(sender is Button btn)) return;
             bool updateMaster = btn.Name.Contains("Master", StringComparison.OrdinalIgnoreCase);
 
-            if (!(lvTables.SelectedItem is TableListItem item)) return;
-            var tblResult = item.TableResult;
-            // Linhas marcadas e com Status = Different
-            var toProcess = tblResult.Rows.Where(r => r.IsSelected && r.Status == RowStatus.Different).ToList();
-            foreach (var r in toProcess)
+            if (!(lvTables.SelectedItem is MultiTableComparer.TableResult tblResult)) return;
+            //var tblResult = item.TableResult;
+
+            var toProcess = tblResult.Rows
+                             .Where(r => r.IsSelected && r.Status == RowStatus.Different)
+                             .ToList();
+            if (toProcess.Count == 0) return;
+
+            PanelBatch.Visibility = Visibility.Visible;
+            //AjustarColunasDeProgresso();
+
+            pbBatch.Minimum = 0;
+            pbBatch.Maximum = toProcess.Count;
+            pbBatch.Value = 0;
+            tbBatchStatus.Text = updateMaster
+                                 ? $"Atualizando Master 0/{toProcess.Count}"
+                                 : $"Atualizando Slave 0/{toProcess.Count}";
+
+            await Task.Run(() =>
             {
-                // Atualiza Slave a partir de Master
-                if (updateMaster)
-                    tblResult.UpdateMaster(r);
-                else
-                    tblResult.UpdateSlave(r);
-                tblResult.Rows.Remove(r);
-            }
+                for (int i = 0; i < toProcess.Count; i++)
+                {
+                    var r = toProcess[i];
+                    if (updateMaster)
+                        tblResult.UpdateMaster(r);
+                    else
+                        tblResult.UpdateSlave(r);
+
+
+                    // Toda UI update pelo Dispatcher
+                    Dispatcher.Invoke(() =>
+                    {
+                        tblResult.Rows.Remove(r);
+                        pbBatch.Value = i + 1;
+                        tbBatchStatus.Text = updateMaster
+                                         ? $"Atualizando Master {i + 1}/{toProcess.Count}"
+                                         : $"Atualizando Slave {i + 1}/{toProcess.Count}";
+                    });
+                }
+            });
+
+            PanelBatch.Visibility = Visibility.Collapsed;
+            //AjustarColunasDeProgresso();
             lvTables_SelectionChanged(lvTables, null);
         }
 
-        private void btnDeleteSelected_Click(object sender, RoutedEventArgs e)
+        private async void btnDeleteSelected_Click(object sender, RoutedEventArgs e)
         {
-            if (!(lvTables.SelectedItem is TableListItem item)) return;
-            var tblResult = item.TableResult;
-            // Linhas marcadas: podem ser OnlyInMaster ou OnlyInSlave
-            var toProcess = tblResult.Rows.Where(r => r.IsSelected && (r.Status == RowStatus.OnlyInMaster || r.Status == RowStatus.OnlyInSlave)).ToList();
-            foreach (var r in toProcess)
+            if (!(lvTables.SelectedItem is MultiTableComparer.TableResult tblResult)) return;
+
+            //if (!(lvTables.SelectedItem is TableListItem item)) return;
+            //var tblResult = item.TableResult;
+
+            var toProcess = tblResult.Rows
+                             .Where(r => r.IsSelected &&
+                                         (r.Status == RowStatus.OnlyInMaster || r.Status == RowStatus.OnlyInSlave))
+                             .ToList();
+            if (toProcess.Count == 0) return;
+
+            PanelBatch.Visibility = Visibility.Visible;
+            AjustarColunasDeProgresso();
+
+            pbBatch.Minimum = 0;
+            pbBatch.Maximum = toProcess.Count;
+            pbBatch.Value = 0;
+            tbBatchStatus.Text = $"Deletando 0/{toProcess.Count}";
+            // Executa em background
+            await Task.Run(() =>
             {
-                if (r.Status == RowStatus.OnlyInMaster)
-                    tblResult.deleteMaster(r.Key.ToString()); // deleta do Slave
-                else // OnlyInSlave
-                    tblResult.deleteSlave(r.Key.ToString());
-                tblResult.Rows.Remove(r);
-            }
+                for (int i = 0; i < toProcess.Count; i++)
+                {
+                    var r = toProcess[i];
+                    if (r.Status == RowStatus.OnlyInMaster)
+                        tblResult.deleteMaster(r.Key.ToString());
+                    else
+                        tblResult.deleteSlave(r.Key.ToString());
+                    tblResult.Rows.Remove(r);
+
+                    // Toda UI update pelo Dispatcher
+                    Dispatcher.Invoke(() =>
+                    {
+                        tblResult.Rows.Remove(r);
+                        pbBatch.Value = i + 1;
+                        tbBatchStatus.Text = $"Deletando {i + 1}/{toProcess.Count}";
+                    });
+                }
+            });
+
+            PanelBatch.Visibility = Visibility.Collapsed;
+            //AjustarColunasDeProgresso();
             lvTables_SelectionChanged(lvTables, null);
         }
     }

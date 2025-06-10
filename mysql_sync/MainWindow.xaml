@@ -11,8 +11,10 @@
     <Window.Resources>
         <!-- registra o conversor embutido BooleanToVisibilityConverter -->
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
-    </Window.Resources>    
-    
+    </Window.Resources>
+
+
+
     <Grid Margin="10">
         <!-- Define duas colunas: 25% e 75% -->
         <Grid.ColumnDefinitions>
@@ -54,9 +56,21 @@
 
                 <!-- 2) Database → Tables -->
                 <HierarchicalDataTemplate
-        DataType="{x:Type class:Database}"
-        ItemsSource="{Binding Objects}">
-                    <TextBlock Text="{Binding Name}"/>
+                    DataType="{x:Type class:Database}"
+                    ItemsSource="{Binding Objects}">
+                    <StackPanel Orientation="Horizontal">
+                        <!-- ContextMenu para as comparações em batch -->
+                        <StackPanel.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Comparar Existência"
+                  Click="CompareExistence_Click"/>
+                                <MenuItem Header="Comparar Geral"
+                  Click="CompareGeneral_Click"/>
+                            </ContextMenu>
+                        </StackPanel.ContextMenu>
+
+                        <TextBlock Text="{Binding Name}"/>
+                    </StackPanel>
                 </HierarchicalDataTemplate>
 
                 <!-- 3) Table com CheckBox e ContextMenu de comparar -->

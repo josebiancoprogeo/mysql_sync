@@ -213,7 +213,7 @@ namespace mysql_sync.Class
                        AND c.TABLE_NAME   = t.TABLE_NAME
                      WHERE c.TABLE_SCHEMA
                        NOT IN ('mysql','information_schema','performance_schema','sys')
-                       AND t.TABLE_TYPE = 'BASE TABLE';";
+                       AND t.TABLE_TYPE = 'BASE TABLE' order by c.TABLE_SCHEMA,c.TABLE_NAME;";
 
                 using (var conn = new MySqlConnection(ConnectionString))
                 {
@@ -435,7 +435,7 @@ namespace mysql_sync.Class
             finally
             {
                 StopRefresh = false;
-                SynchronizeChannels();
+                //SynchronizeChannels();
             }
         }
 
@@ -560,7 +560,7 @@ namespace mysql_sync.Class
             {
                 ExecuteNonQuery("SET sql_log_bin = ON;");
                 StopRefresh = false;
-                SynchronizeChannels();
+                //SynchronizeChannels();
             }
         }
 
@@ -715,7 +715,7 @@ namespace mysql_sync.Class
             {
                 ExecuteNonQuery("SET sql_log_bin = ON;");
                 StopRefresh = false;
-                SynchronizeChannels();
+                //SynchronizeChannels();
             }
         }
     }

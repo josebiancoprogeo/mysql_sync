@@ -11,6 +11,9 @@ using mysql_sync.Class;
 using mysql_sync.Forms;
 using MySql.Data.MySqlClient;
 using System.Windows.Controls;
+using Mysqlx.Prepare;
+using static MultiTableComparer;
+using System.DirectoryServices.ActiveDirectory;
 
 namespace mysql_sync
 {
@@ -303,24 +306,183 @@ namespace mysql_sync
             if (result != true)
                 return;
 
-            // 6) Ao fechar com OK, pega a tabela e colunas selecionadas no próprio form
-            //    (FormCompare deve expor estas duas propriedades)
-            //var tableToCompare = form.SelectedTable;          // instância de Table
-            //var selectedColumns = form.SelectedColumns.Select(c => c.Name).ToList();
-
-            // 7) Dispara o compare
-            var comparer = new MultiTableComparer(
+            // 6) Criar o “parentComparer” que saberá usar master/slave depois
+            var parentComparer = new MultiTableComparer(
                 master: master,
-                slave: slave,           // sua instância de slave
-                tables: masterTables    // lista de Table vindas do Master
-
+                slave: slave,
+                tables: masterTables
             );
 
-            await comparer.Execute();
+            // 6) Prepara uma coleção observável para receber TableResult conforme forem ficando prontos
+            var incrementalResults = new ObservableCollection<MultiTableComparer.TableResult>();
 
-            // 8) Mostra o resultado
-            var resultForm = new FormCompareResult(comparer) { Owner = this };
-            resultForm.ShowDialog();
+            // 7) Instancia e exibe o form de resultados **antes** de começar a comparar
+            var resultForm = new FormCompareResult(incrementalResults, masterTables.Count)
+            {
+                Owner = this
+            };
+            resultForm.Show();  // Nota: Show, não ShowDialog, para manter o fluxo assíncrono ativo
+
+            // 8) Para cada tabela, dispara um Task de comparação em paralelo
+            var tasks = masterTables.Select(tbl =>
+                Task.Run(async () =>
+                {
+                    // Tudo dentro do Task.Run roda no thread-pool, liberando o UI
+                    var compare = new DataCompare(master, slave, tbl);
+                    await compare.ExecuteAsync();
+
+                    var tableResult = new MultiTableComparer.TableResult
+                    {
+                        TableName = tbl.Name,
+                        Rows = compare.Results.Where(r => r.Status != RowStatus.Equal).ToList(),
+                        SelectedColumns = tbl.Columns.Where(c => c.IsSelected).ToList(),
+                        PrimaryKey = tbl.Columns.Single(c => c.IsPrimaryKey),
+                        Parent = parentComparer
+                    };
+
+                    // Garante que a adição na ObservableCollection aconteça no UI thread
+                    Application.Current.Dispatcher.Invoke(() =>
+                    {
+                        incrementalResults.Add(tableResult);
+                    });
+                })
+            ).ToList();
+
+            // Aguarda todas as comparações terminarem (mas a janela continua responsiva)
+            await Task.WhenAll(tasks);
+
+            // 9) Aguarda todos os Tasks terminarem (opcional: pode remover se quiser manter o form aberto indefinidamente)
+            //await Task.WhenAll(tasks);
+        }
+
+        // -------------- Helpers de comparação em lote --------------
+
+        private void RunComparisonBatch(List<Table> tables)
+        {
+            // já reutiliza o mesmo fluxo de CompareTables_Click
+            var master = Connections.FirstOrDefault(c => c.Master);
+            var slave = Connections.FirstOrDefault(c => !c.Master);
+            if (master == null || slave == null)
+            {
+                MessageBox.Show("Defina conexões Master e Slave primeiro.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            // prepara o parentComparer
+            var parentComparer = new MultiTableComparer(master, slave, tables);
+
+            // limpa seleção antiga
+            foreach (var t in tables) t.IsSelected = false;
+
+            // chamar o form de resultado de forma incremental
+            var incrementalResults = new ObservableCollection<MultiTableComparer.TableResult>();
+            var resultForm = new FormCompareResult(incrementalResults, tables.Count) { Owner = this };
+            resultForm.Show();
+
+            var semaphore = new SemaphoreSlim(5);
+
+            // dispara comparações paralelas
+            var tasks = tables.Select(tbl =>
+                Task.Run(async () =>
+                {
+                    await semaphore.WaitAsync();
+                    try
+                    {
+
+
+                        var compare = new DataCompare(master, slave, tbl);
+                        await compare.ExecuteAsync();
+
+                        var tr = new MultiTableComparer.TableResult
+                        {
+                            TableName = tbl.Name,
+                            Rows = compare.Results.Where(r => r.Status != RowStatus.Equal).ToList(),
+                            SelectedColumns = tbl.Columns.Where(c => c.IsSelected).ToList(),
+                            Parent = parentComparer
+                        };
+
+                        if (tbl.Columns.Where(c => c.IsPrimaryKey).Count() > 0)
+                            tr.PrimaryKey = tbl.Columns.Single(c => c.IsPrimaryKey);
+
+                        Dispatcher.Invoke(() => incrementalResults.Add(tr));
+                    }
+                    finally
+                    {
+                        // sempre libera para a próxima tarefa
+                        semaphore.Release();
+                    }
+                })
+            ).ToList();
+
+            _ = Task.WhenAll(tasks);
+        }
+
+        /// <summary>
+        /// “Comparar Existência”: só compara a existência (PK) em todas as tabelas do Database clicado.
+        /// </summary>
+        private void CompareExistence_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(sender is MenuItem mi && mi.DataContext is Database db)) return;
+
+            // pega a Master/Slave corretas
+            var master = Connections.FirstOrDefault(c => c.Master);
+            var slave = Connections.FirstOrDefault(c => !c.Master);
+            if (master == null || slave == null)
+            {
+                MessageBox.Show("Defina conexões Master e Slave primeiro.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            // pega as tabelas desse Database na Master
+            var masterDb = master.Databases.FirstOrDefault(d => d.Name == db.Name);
+            if (masterDb == null)
+            {
+                MessageBox.Show($"Database '{db.Name}' não encontrada na Master.",
+                                "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            var tables = masterDb.Objects.OfType<Table>().ToList();
+
+            tables = tables.Take(60).ToList();
+            // para cada tabela, marca apenas a PK
+            foreach (var tbl in tables)
+                foreach (var col in tbl.Columns)
+                    col.IsSelected = col.IsPrimaryKey;
+
+            // dispara o batch
+            RunComparisonBatch(tables);
+        }
+
+        /// <summary>
+        /// “Comparar Geral”: compara todas as colunas (PK + não PK) em todas as tabelas do Database clicado.
+        /// </summary>
+        private void CompareGeneral_Click(object sender, RoutedEventArgs e)
+        {
+            if (!(sender is MenuItem mi && mi.DataContext is Database db)) return;
+
+            var master = Connections.FirstOrDefault(c => c.Master);
+            var slave = Connections.FirstOrDefault(c => !c.Master);
+            if (master == null || slave == null)
+            {
+                MessageBox.Show("Defina conexões Master e Slave primeiro.", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            var masterDb = master.Databases.FirstOrDefault(d => d.Name == db.Name);
+            if (masterDb == null)
+            {
+                MessageBox.Show($"Database '{db.Name}' não encontrada na Master.",
+                                "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            var tables = masterDb.Objects.OfType<Table>().ToList();
+
+            // marca todas as colunas
+            foreach (var tbl in tables)
+                foreach (var col in tbl.Columns)
+                    col.IsSelected = true;
+
+            RunComparisonBatch(tables);
         }
     }
 }

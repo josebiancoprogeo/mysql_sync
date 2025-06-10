@@ -16,6 +16,10 @@ public class MultiTableComparer
         public int DivergenceCount
             => Rows.Count(r => r.Status != RowStatus.Equal);
 
+        // Propriedade para exibir “NomeDaTabela (QtdDivergências)”
+        public string TableDisplay
+            => $"{TableName} ({DivergenceCount})";
+
         /// <summary>
         /// Insere no MASTER os valores vindos de `SlaveRow` (usado quando Status = OnlyInSlave).
         /// </summary>
@@ -115,7 +119,7 @@ public class MultiTableComparer
             var rowData = await _master.SelectRowByIDAsync(tab, key);
             _slave.InsertRow(tab, rowData);
         }
-        
+
     }
     #endregion
 
