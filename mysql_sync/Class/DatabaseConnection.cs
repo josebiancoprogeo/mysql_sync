@@ -702,7 +702,7 @@ namespace mysql_sync.Class
             // Constroi a cláusula INSERT
             string setClause = string.Join(", ", setAssignments);
             string whereClause = string.Join(" and ", PKvalue);
-            string sql = $"UPDATE `{tab.Parent.Name}`.`{tab.Name}` SET {setClause} where {whereClause}  ;";
+            string sql = $"UPDATE `{tab.Parent.Name}`.`{tab.Name}` SET {setClause.Replace("''","null")} where {whereClause}  ;";
 
             // Executa em uma nova conexão (sem envolvimento de replicação)
             StopRefresh = true;
