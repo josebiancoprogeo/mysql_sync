@@ -12,7 +12,8 @@ namespace mysql_sync.Class
         OnlyInMaster,
         OnlyInSlave,
         Equal,
-        Different
+        Different,
+        Error
     }
 
     public class ComparisonResult

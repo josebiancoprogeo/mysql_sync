@@ -45,13 +45,17 @@ namespace mysql_sync.Forms
         // Marca todas as colunas(exceto PKs que já vêm desabilitados)
         private void chkSelectAllColumns_Checked(object sender, RoutedEventArgs e)
         {
-            foreach (var cs in SelectedTable.Columns)
+            if (SelectedTable != null)
             {
-                if (!cs.IsPrimaryKey)    // permite que PKs permaneçam sempre selecionadas/desativadas conforme
-                    cs.IsSelected = true;
+                foreach (var cs in SelectedTable.Columns)
+                {
+                    if (!cs.IsPrimaryKey)    // permite que PKs permaneçam sempre selecionadas/desativadas conforme
+                        cs.IsSelected = true;
+                }
+
+                // força o ListView de colunas a redesenhar todas as CheckBoxes
+                CollectionViewSource.GetDefaultView(lvColumns.ItemsSource).Refresh();
             }
-            // força o ListView de colunas a redesenhar todas as CheckBoxes
-            CollectionViewSource.GetDefaultView(lvColumns.ItemsSource).Refresh();
         }
 
         // Desmarca todas as colunas (exceto PKs)

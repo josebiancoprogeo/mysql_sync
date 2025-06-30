@@ -398,15 +398,21 @@ namespace mysql_sync
                         var tr = new MultiTableComparer.TableResult
                         {
                             TableName = tbl.Name,
-                            Rows = compare.Results.Where(r => r.Status != RowStatus.Equal).ToList(),
                             SelectedColumns = tbl.Columns.Where(c => c.IsSelected).ToList(),
                             Parent = parentComparer
                         };
+
+                        if (compare.Results != null)
+                            tr.Rows = compare.Results.Where(r => r.Status != RowStatus.Equal).ToList();
 
                         if (tbl.Columns.Where(c => c.IsPrimaryKey).Count() > 0)
                             tr.PrimaryKey = tbl.Columns.Where(c => c.IsPrimaryKey).ToList();
 
                         Dispatcher.Invoke(() => incrementalResults.Add(tr));
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"{tbl.Name} : {ex.Message}");
                     }
                     finally
                     {
@@ -445,7 +451,7 @@ namespace mysql_sync
             }
             var tables = masterDb.Objects.OfType<Table>().ToList();
 
-            tables = tables.Take(60).ToList();
+            //tables = tables.Take(60).ToList();
             // para cada tabela, marca apenas a PK
             foreach (var tbl in tables)
                 foreach (var col in tbl.Columns)
@@ -479,6 +485,7 @@ namespace mysql_sync
             }
             var tables = masterDb.Objects.OfType<Table>().ToList();
 
+            //tables = tables.Take(30).ToList();
             // marca todas as colunas
             foreach (var tbl in tables)
                 foreach (var col in tbl.Columns)

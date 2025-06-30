@@ -5,6 +5,7 @@ using System.Linq;
 using MySql.Data.MySqlClient;
 using mysql_sync.Class;
 using mysql_sync.Forms;
+using MySqlX.XDevAPI.Common;
 
 public class DataCompare
 {
@@ -84,7 +85,14 @@ public class DataCompare
                         //    Equals(mRow[c.Name], sRow[c.Name]));
                         //status = equal ? RowStatus.Equal : RowStatus.Different;
                         bool equal = _columns.All(c =>
-                            Equals(mRow[c.Name], sRow[c.Name]));
+                            {
+                                var mVal = mRow[c.Name];
+                                var sVal = sRow[c.Name];
+                                if (mVal is byte[] mb && sVal is byte[] sb)
+                                    return mb.SequenceEqual(sb);
+                                return Equals(mRow[c.Name], sRow[c.Name]);
+                            }
+                            );
                         status = equal ? RowStatus.Equal : RowStatus.Different;
                     }
                     else if (sRow != null)
@@ -105,8 +113,13 @@ public class DataCompare
         }
         catch (Exception ex)
         {
-            Results = null;
-            throw;
+            var results = new List<ComparisonResult>();
+            results.Add(new ComparisonResult
+            {
+                Key = -1,
+                Status = RowStatus.Error
+            });
+            Results = results;
         }
     }
 

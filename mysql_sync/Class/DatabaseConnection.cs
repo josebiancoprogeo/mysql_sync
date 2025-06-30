@@ -156,7 +156,7 @@ namespace mysql_sync.Class
                 {
                     Channels.Add(item);
                 }
-                
+
 
                 //// 3) Atualiza o ObservableCollection Channels de forma fosse responsável pela UI thread
                 //// Remove ausentes
@@ -297,7 +297,7 @@ namespace mysql_sync.Class
                 sqls.Add("SET sql_log_bin = ON;");
                 sqls.Add($"START SLAVE FOR CHANNEL '{chn.ChannelName}';");
 
-                ExecuteNonQueryBatch( sqls );
+                ExecuteNonQueryBatch(sqls);
                 //// STOP SLAVE
                 //ExecuteNonQuery($"STOP SLAVE FOR CHANNEL '{chn.ChannelName}';");
 
@@ -385,7 +385,7 @@ namespace mysql_sync.Class
         /// <returns>DataTable com o resultado.</returns>
         public async Task<DataTable> ExecuteQueryAsync(
             string sql,
-            int commandTimeoutSeconds = 300,
+            int commandTimeoutSeconds = 1200,
             CancellationToken cancellationToken = default)
         {
             var dt = new DataTable();
@@ -404,7 +404,16 @@ namespace mysql_sync.Class
             await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
 
             // Carrega o resultado no DataTable (este Fill pode demorar, mas não usa cmd.CommandTimeout)
-            dt.Load(reader);
+            dt.Load(reader, LoadOption.OverwriteChanges, (sender, args) =>
+            {
+                var vals = args.Values;
+                for (int i = 0; i < vals.Length; i++)
+                {
+                    if (vals[i] is MySql.Data.Types.MySqlDateTime mdt && !mdt.IsValidDateTime)
+                        vals[i] = DBNull.Value;
+                }
+                args.Continue = true;  // ignora o erro e prossegue
+            });
 
             return dt;
         }
@@ -576,7 +585,7 @@ namespace mysql_sync.Class
                 pkCol = tab.Columns.First(c => c.IsPrimaryKey).Name;
 
             var otherCols = tab.Columns.Select(c => $"`{c.Name}`");
-            var selectCols = string.Join(", ", otherCols) ;
+            var selectCols = string.Join(", ", otherCols);
 
             var sql = $"SELECT {selectCols} FROM `{tab.Parent.Name}`.`{tab.Name}` WHERE {pkCol} = '{key}' limit 1";
 
@@ -611,12 +620,10 @@ namespace mysql_sync.Class
                     //valueLiterals.Add("NULL");
                     val = "NULL";
                 }
-
-                // 1) Coluna geometry (por exemplo: "point", "linestring", "polygon", etc)
-                if (dataTypeLower.Contains("geometry")
-                    || dataTypeLower.Contains("point")
-                    || dataTypeLower.Contains("linestring")
-                    || dataTypeLower.Contains("polygon"))
+                else if (dataTypeLower.Contains("geometry")
+                        || dataTypeLower.Contains("point")
+                        || dataTypeLower.Contains("linestring")
+                        || dataTypeLower.Contains("polygon"))
                 {
                     // Trata apenas arrays de bytes (WKB)
                     if (rawValue is byte[] arr)
@@ -650,6 +657,7 @@ namespace mysql_sync.Class
                         );
                     }
                 }
+
                 // 2) Coluna textual (string, datetime, etc)
                 else if (rawValue is string s)
                 {
@@ -664,6 +672,32 @@ namespace mysql_sync.Class
                     string fmt = dt.ToString("yyyy-MM-dd HH:mm:ss");
                     //valueLiterals.Add($"'{fmt}'");
                     val = $"'{fmt}'";
+                }
+                else if (rawValue is MySql.Data.Types.MySqlDateTime mdt)
+                {
+                    if (dataTypeLower == "date")
+                    {
+                        // o rawValue virá sempre como DateTime
+                        var dt2 = (DateTime)mdt;
+                        // formata só a parte da data
+                        val = $"'{dt2:yyyy-MM-dd}'";
+                    }
+                    else
+                    {
+                        // o rawValue virá sempre como DateTime
+                        var dt2 = (DateTime)mdt;
+                        // formata só a parte da data
+                        val = $"'{dt2:yyyy-MM-dd HH:mm:ss}'";
+                    }
+
+                }
+                else if (rawValue is TimeSpan ts)
+                {
+
+
+                    val = $"'{ts.ToString()}'";
+
+
                 }
                 // 4) Numérico (int, long, decimal, double, etc)
                 else if (rawValue is IFormattable num)
@@ -689,7 +723,8 @@ namespace mysql_sync.Class
                 if (col.IsPrimaryKey)
                 {
                     PKvalue.Add($"`{colName}` = {val}");
-                } else
+                }
+                else
                 {
                     setAssignments.Add($"`{colName}` = {val}");
                 }
@@ -702,7 +737,7 @@ namespace mysql_sync.Class
             // Constroi a cláusula INSERT
             string setClause = string.Join(", ", setAssignments);
             string whereClause = string.Join(" and ", PKvalue);
-            string sql = $"UPDATE `{tab.Parent.Name}`.`{tab.Name}` SET {setClause.Replace("''","null")} where {whereClause}  ;";
+            string sql = $"UPDATE `{tab.Parent.Name}`.`{tab.Name}` SET {setClause.Replace("''", "null")} where {whereClause}  ;";
 
             // Executa em uma nova conexão (sem envolvimento de replicação)
             StopRefresh = true;
